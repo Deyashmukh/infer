@@ -61,3 +61,27 @@ async def test_sweeper_cancels_and_closes():
     await asyncio.sleep(0.02)
     assert driver.closed is True
     assert reg.get(s.id) is None
+
+
+async def test_connection_lost_during_fetch_fails_and_closes():
+    # fetch_document raises after a successful login+MFA -> DocFetchError, driver closed
+    driver = FakeDriver(connection_lost_on_fetch=True)
+    reg, mgr = make_manager(driver)
+    s = mgr.start("u", "p")
+    await _wait(reg, s.id, SessionStatus.AWAITING_MFA)
+    mgr.submit_mfa(s.id, "123456")
+    await _wait(reg, s.id, SessionStatus.FAILED)
+    assert reg.get(s.id).error.type == "DocFetchError"
+    assert driver.closed is True
+
+
+async def test_driver_raised_cancellation_fails_and_closes():
+    # driver raises CancelledError mid-flow -> _run records FAILED + re-raises; driver closed
+    driver = FakeDriver(cancel_on_mfa=True)
+    reg, mgr = make_manager(driver)
+    s = mgr.start("u", "p")
+    await _wait(reg, s.id, SessionStatus.AWAITING_MFA)
+    mgr.submit_mfa(s.id, "123456")
+    await _wait(reg, s.id, SessionStatus.FAILED)
+    assert reg.get(s.id).error.type == "SessionExpiredError"
+    assert driver.closed is True

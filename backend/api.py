@@ -56,7 +56,7 @@ def build_router(manager: SessionManager, registry: SessionRegistry) -> APIRoute
         return {"session_id": session_id, "status": session.status.value}
 
     @router.get("/sessions/{session_id}/documents/{doc_id}")
-    async def get_document(session_id: str, doc_id: str, download: int = 0) -> Response:
+    async def get_document(session_id: str, doc_id: str, download: bool = False) -> Response:
         session = registry.get(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="unknown session")
