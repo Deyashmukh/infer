@@ -22,7 +22,6 @@ class AuthStep(StrEnum):
 class DocRef:
     doc_id: str
     name: str
-    url: str
 
 
 @dataclass(frozen=True)
@@ -91,7 +90,7 @@ class FakeDriver:
     async def list_documents(self) -> list[DocRef]:
         if self._doc_fail:
             raise DocFetchError("no documents found")
-        return [DocRef(doc_id="doc-0", name="Declarations", url="https://lm/docs/dec.pdf")]
+        return [DocRef(doc_id="doc-0", name="Declarations")]
 
     async def fetch_document(self, ref: DocRef) -> FetchedDoc:
         if self._connection_lost_on_fetch:
