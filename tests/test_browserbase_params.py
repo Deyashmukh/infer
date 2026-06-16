@@ -4,8 +4,6 @@ from spike.config import Config
 CFG = Config(
     browserbase_api_key="bb_x",
     browserbase_project_id="proj_1",
-    lm_username="u",
-    lm_password="p",
     lm_login_url="https://www.libertymutual.com/log-in",
     browserbase_context_id=None,
 )
