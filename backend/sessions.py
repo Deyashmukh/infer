@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from backend.browser import DocRef
-from backend.models import ErrorInfo, SessionStatus
+from backend.browser import AuthStep, BrowserDriver, DocRef
+from backend.models import CarrierError, ErrorInfo, MfaError, SessionStatus
 
 
 @dataclass
@@ -41,3 +42,66 @@ class SessionRegistry:
 
     def all(self) -> list[Session]:
         return list(self._sessions.values())
+
+
+class SessionManager:
+    def __init__(
+        self,
+        registry: SessionRegistry,
+        driver_factory: Callable[[], BrowserDriver],
+        login_url: str,
+        clock: Callable[[], float],
+        mfa_deadline: float = 120.0,
+        max_mfa_attempts: int = 3,
+    ) -> None:
+        self._registry = registry
+        self._driver_factory = driver_factory
+        self._login_url = login_url
+        self._clock = clock
+        self._mfa_deadline = mfa_deadline
+        self._max_mfa_attempts = max_mfa_attempts
+
+    def start(self, username: str, password: str) -> Session:
+        session = self._registry.create()
+        session.created_monotonic = self._clock()
+        session.task = asyncio.create_task(self._run(session, username, password))
+        return session
+
+    def submit_mfa(self, session_id: str, code: str) -> None:
+        session = self._registry.get(session_id)
+        if session is not None:
+            session.mfa_codes.put_nowait(code)
+
+    async def _run(self, session: Session, username: str, password: str) -> None:
+        driver = self._driver_factory()
+        try:
+            await driver.open_login(self._login_url)
+            step = await driver.submit_credentials(username, password)
+            while step is AuthStep.NEEDS_MFA:
+                session.status = SessionStatus.AWAITING_MFA
+                code = await asyncio.wait_for(session.mfa_codes.get(), timeout=self._mfa_deadline)
+                session.status = SessionStatus.VERIFYING_MFA
+                if session.mfa_start == 0.0:  # later task moves this to the /mfa request path
+                    session.mfa_start = self._clock()
+                session.mfa_attempts += 1
+                try:
+                    step = await driver.submit_mfa(code)
+                except MfaError:
+                    if session.mfa_attempts >= self._max_mfa_attempts:
+                        raise
+                    step = AuthStep.NEEDS_MFA
+            session.status = SessionStatus.FETCHING
+            refs = await driver.list_documents()
+            session.doc_refs = refs
+            # fetch ALL discovered docs; browser closes at READY
+            for i, ref in enumerate(refs):
+                fetched = await driver.fetch_document(ref)
+                session.documents[ref.doc_id] = (fetched.name, fetched.content)
+                if i == 0:  # latency tied to the FIRST doc
+                    session.latency_ms = (self._clock() - session.mfa_start) * 1000.0
+            session.status = SessionStatus.READY
+        except CarrierError as exc:
+            session.error = ErrorInfo.from_exception(exc)
+            session.status = SessionStatus.FAILED
+        finally:
+            await driver.close()
