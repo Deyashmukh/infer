@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Secrets / local env — never commit (see CLAUDE.md quality bar)
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs
+*.log
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# Worktrees created in-repo (isolated work; see CLAUDE.md execution rule 1)
+.worktrees/
