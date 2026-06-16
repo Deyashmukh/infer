@@ -70,6 +70,8 @@ class SessionManager:
     def submit_mfa(self, session_id: str, code: str) -> None:
         session = self._registry.get(session_id)
         if session is not None:
+            if session.mfa_start == 0.0:
+                session.mfa_start = self._clock()
             session.mfa_codes.put_nowait(code)
 
     async def _run(self, session: Session, username: str, password: str) -> None:
