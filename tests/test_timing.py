@@ -1,4 +1,12 @@
+import pytest
+
 from spike.timing import Timer
+
+
+def test_stop_without_start_raises_informative_keyerror():
+    timer = Timer(clock=lambda: 1.0)
+    with pytest.raises(KeyError, match="without a prior start"):
+        timer.stop("never_started")
 
 
 def test_timer_records_duration_with_fake_clock():

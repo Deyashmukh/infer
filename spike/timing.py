@@ -15,6 +15,8 @@ class Timer:
         self._starts[label] = self._clock()
 
     def stop(self, label: str) -> float:
+        if label not in self._starts:
+            raise KeyError(f"Timer.stop('{label}') called without a prior start()")
         elapsed = self._clock() - self._starts[label]
         self.durations[label] = elapsed
         return elapsed

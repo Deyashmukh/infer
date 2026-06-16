@@ -1,3 +1,5 @@
+import json
+
 from spike.challenge import ChallengeKind, ChallengeSignals, classify_challenge
 
 
@@ -40,3 +42,4 @@ def test_to_result_fields_is_json_safe():
     assert fields["kind"] == "AKAMAI_ACCESS_DENIED"
     assert fields["status"] == 403
     assert "_abck" in fields["abck_state"]
+    json.dumps(fields)  # must not raise — the record goes into RESULTS.md
