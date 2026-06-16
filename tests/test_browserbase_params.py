@@ -11,23 +11,27 @@ CFG = Config(
 
 def test_params_request_residential_us_proxy():
     params = build_session_params(CFG)
-    assert params["projectId"] == "proj_1"
+    assert params["project_id"] == "proj_1"
+    assert params["keep_alive"] is True
     proxies = params["proxies"]
     assert isinstance(proxies, list) and proxies[0]["geolocation"]["country"] == "US"
 
 
-def test_params_omit_context_when_absent():
-    params = build_session_params(CFG)
-    assert "context" not in params["browserSettings"]
+def test_params_omit_browser_settings_when_no_context_or_stealth():
+    assert "browser_settings" not in build_session_params(CFG)
+
+
+def test_use_proxy_toggle():
+    assert "proxies" in build_session_params(CFG)  # default on (the real gate)
+    assert "proxies" not in build_session_params(CFG, use_proxy=False)  # free-plan probe
 
 
 def test_params_include_persistent_context_when_id_given():
     params = build_session_params(CFG, context_id="ctx_9")
-    ctx = params["browserSettings"]["context"]
-    assert ctx == {"id": "ctx_9", "persist": True}
+    assert params["browser_settings"]["context"] == {"id": "ctx_9", "persist": True}
 
 
 def test_advanced_stealth_off_by_default_on_by_request():
-    assert "advancedStealth" not in build_session_params(CFG)["browserSettings"]
-    stealth_params = build_session_params(CFG, advanced_stealth=True)
-    assert stealth_params["browserSettings"]["advancedStealth"] is True
+    assert "browser_settings" not in build_session_params(CFG)
+    bs = build_session_params(CFG, advanced_stealth=True)["browser_settings"]
+    assert bs["advanced_stealth"] is True
