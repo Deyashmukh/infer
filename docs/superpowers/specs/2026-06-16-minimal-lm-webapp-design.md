@@ -1,155 +1,159 @@
-# Minimal Liberty Mutual Policy-Document Web App — Design
+# Minimal Liberty Mutual Policy-Document Web App — Design (Revised, post-gate)
 
 - **Date:** 2026-06-16
-- **Status:** Draft for review
+- **Status:** Revised after feasibility proven on a residential dev IP; **datacenter
+  login is gated as milestone 0** (§19). Supersedes the Browserbase-based draft.
 - **Scope:** A minimal but real human-in-the-loop web app for **Liberty Mutual
-  only**, used to prove hosted access end-to-end through a UI. This is the
-  foundation of the actual submission app, built minimal. Geico and session reuse
-  are explicit follow-ups, out of scope here.
-- **Supersedes:** the CLI-based Phase B of
-  `docs/superpowers/specs/2026-06-16-liberty-mutual-spike-design.md`. Phase A
-  (offline machinery, already built + tested) is reused. The spike spec's
-  authorization (§9), gate framing, and lockout rail carry over.
+  only**: user enters portal credentials → backend logs in on a **self-hosted
+  headless Chromium** → MFA prompt surfaces in the UI → user submits the code →
+  policy PDFs are fetched and rendered. Foundation of the submission app, built
+  minimal. Geico is an explicit follow-up.
+- **Supersedes:** the Browserbase architecture in the prior version of this doc and
+  the CLI Phase B of `2026-06-16-liberty-mutual-spike-design.md`. The reusable pure
+  machinery, the lockout rail, and the authorization stance carry over.
 
-## 1. Context
+## 1. Context — feasibility is proven (with one honest caveat)
 
-We are building a web app that lets a user pull personal-lines policy documents
-from carrier portals. The central risk remains hosted (non-residential) access
-past Liberty Mutual's bot stack (Akamai Bot Manager + Auth0 + Shape/F5). Phase A
-delivered the reusable offline machinery (config, PDF validate/decode, bot-challenge
-classification, LM page-state + document-URL discovery, an injected-clock timer, a
-Browserbase session-params builder, a lockout guard + gate evaluator) — all built
-test-first, 33 tests, mypy --strict + ruff clean.
+The earlier draft treated hosted access past LM's defenses as the open risk. A
+diagnostic spike has now largely resolved it, with evidence — sourced precisely:
 
-The user chose to validate the **human-in-the-loop flow through a real UI** rather
-than a CLI, because that is how the production app works: the user types their
-credentials and MFA code, the backend drives the carrier login on hosted
-infrastructure, and the documents render in the browser. The first real run of
-this app **is the go/no-go feasibility gate** — proving we can reach LM, complete
-an authenticated login + MFA, and fetch a policy PDF from a hosted browser.
+- **The blocker was never bot detection.** LM's auth-domain bot sensor returned
+  `{"success":true}` on **every** egress IP we tried, including AWS **datacenter**
+  IPs (`diag_matrix.json`, `sensor_accepted: true` on all Browserbase attempts).
+- **The real blocker was an HTTP/2 transport failure** on the credential POST
+  (`/usernamepassword/login`): `net::ERR_HTTP2_PROTOCOL_ERROR`, perfectly correlated
+  with failure (`login_post_got_response:false`), on Browserbase **and** local
+  Chromium. IP-independent.
+- **`--disable-http2` removes the error.** The matrix proves this *narrowly*: with the
+  flag, all requests ran `http/1.1` with zero `ERR_HTTP2_PROTOCOL_ERROR`. It does
+  **not** by itself show a login *success* — within the matrix's 10s window those
+  `local_h1` runs were still mid-POST (`OTHER`).
+- **The full flow completing end-to-end is proven separately** by a longer-window run
+  (`confirm_h1.py`): credentials → MFA (SMS) → authenticated account
+  (`h1_account.json` → `eservice.libertymutual.com/accountmanager/homepage`), session
+  saved (`lm_state.json`).
+- **Session reuse works** (`map_docs.py` re-entered the account from `lm_state.json`,
+  no MFA). **Documents** live at `/accountmanager/documents` (state `DOCUMENTS`) behind
+  **"View / print"** controls; clicking one yields an authenticated `application/pdf`
+  response from `/accountmanager/document/download/...` (`docs_probe.json`).
+- **Browserbase cannot pass `--disable-http2`** (no custom-flags API; `connect_over_cdp`
+  attaches to an already-launched browser). The only Browserbase HTTP/1.1 path is a
+  self-run MITM proxy + CA — more infra than self-hosting. **Therefore we self-host.**
 
-**Honest prior (unchanged):** this login surface is hard; the spike may fail, and
-a clean, well-classified negative result is a valid outcome. Insurance-data
-aggregators do this commercially, so it is feasible *with the right infra* — this
-app tests whether ours clears it.
+**The one caveat we must close (milestone 0).** Every end-to-end success so far ran on
+a **residential dev IP** (`174.167.100.96`), and the doc-fetch proofs reused a saved,
+MFA-skipping cookie jar — i.e. close to the setup the brief disqualifies. The bot
+sensor accepted every datacenter IP, and the only datacenter failures were the
+IP-independent H2 error (Browserbase died pre-login and can't take the flag) — so
+**no datacenter IP has yet completed a login end-to-end.** "Datacenter +
+`--disable-http2` logs in" is a strong **inference, not yet an observation.** Milestone
+0 (§19) converts it to evidence cheaply, before any product code.
 
 ## 2. Goal & success criteria (measurable)
 
-Through the web UI, for Liberty Mutual, from a Browserbase-hosted browser
-(residential proxy egress, US geo — NOT the dev machine):
+Through the web UI, for Liberty Mutual, from a **self-hosted headless Chromium**
+(`--disable-http2`, containerized; **direct/default egress this increment** — residential
+proxy deferred, §13):
 
-1. User selects LM, enters username + password; backend reaches the LM login from
-   the hosted browser **without a hard block / unsolvable challenge**.
-2. Backend submits credentials and detects the MFA prompt; the UI **reveals an MFA
-   field**.
-3. User submits the MFA code; backend reaches the authenticated documents area and
-   **fetches ≥1 real policy PDF** through the proxied remote browser.
+1. User selects LM, enters username + password; backend submits credentials over
+   HTTP/1.1 without the H2 failure.
+2. Backend detects the MFA prompt; the UI **reveals an MFA field**.
+3. User submits the SMS code; backend reaches `/accountmanager/documents` and **fetches
+   ≥1 real policy PDF** (proxying the authenticated `application/pdf` bytes).
 4. The UI **renders the PDF** (react-pdf) and offers download.
-5. Latency from **MFA-submit → document rendered** is measured and reported (the
-   brief's graded metric). Do not pre-pin a threshold; report the measurement.
-6. On any bot-block, the failure is **classified with structured fields** (Akamai
-   `_abck` state, HTTP status, CAPTCHA presence) and surfaced as a typed error.
+5. Latency from **MFA-submit → first document rendered** is measured and reported (the
+   graded metric). Report the measurement; do not pre-pin a threshold.
+6. On any unexpected bot-block, the failure is **classified with structured fields**
+   and surfaced as a typed error (defensive — not expected, given §1).
 
-**Pre-committed gate (carried from the spike spec):** PASS = the hosted browser
-reaches and renders the LM login reliably AND completes ≥1 full
-login→MFA→PDF-fetch→render through proxied egress. A hard block / unsolvable
-challenge = FAIL; if the failure is specifically bot detection, escalate once
-(Browserbase "Verified"/Scale, or a self-hosted stealth browser) before declaring
-infeasible. A documented negative result is valid.
+**Gate status:** the feasibility gate is **met on a residential dev IP**
+(login+MFA+PDF). The remaining unknown is whether it holds on a **datacenter IP** in
+the container — **milestone 0 (§19) settles that first**, before the product build.
+The build then re-proves the flow **through the UI** and adds rendering + latency.
 
 ## 3. Non-goals (YAGNI)
 
-- **No session reuse yet** (deferred — the next increment; it is a graded criterion
-  but not part of proving the base flow).
-- No Geico (added after LM is green — independent bot-layer risk).
-- No multi-user concurrency guarantees, no horizontal scaling, no external
-  state store / job queue (in-memory, single-process backend).
-- No user accounts / auth on *our* side; no database.
-- No heavy UI polish (clean + minimal now; polish is a later pass).
-- No document parsing/extraction — success is fetching + rendering the PDF bytes.
-- No long-term storage of credentials or documents.
+- **Residential proxy deferred** (direct/default egress now). The driver is built
+  **proxy-ready** (env-configurable, off by default) so enabling it later is config,
+  not code (§13).
+- **Session reuse deferred** as a *product* feature (proven in the spike; the next
+  increment wires `storage_state` into the flow). Fresh login each session for now.
+- No Geico yet. No multi-user concurrency guarantees / horizontal scaling / external
+  state store. No user accounts or DB on our side. No document parsing/extraction
+  (success = fetch + render the PDF bytes). No long-term storage of creds or docs.
+  No heavy UI polish.
 
 ## 4. Architecture
 
-**Option A — background async task + in-memory session registry + polling.**
+**Self-hosted headless Chromium (containerized) + FastAPI async backend + React SPA.
+One container image runs identically local and deployed (dev/prod parity, §14).**
 
 ```
-React SPA (Vite, TS)                 FastAPI backend (async)              Browserbase
-  CarrierSelect                        POST /sessions      ─┐               (hosted browser,
-  CredentialForm   ── REST + poll ──►  GET  /sessions/{id}   │ in-memory      residential proxy)
-  MfaPrompt                            POST /sessions/{id}/mfa│ registry +
-  DocumentViewer   ◄── PDF bytes ──    GET  /sessions/{id}/documents/{doc}  async task
-   (react-pdf)                          status machine ──(asyncio.Event)──► async Playwright/CDP
-  reuses Phase A core (spike/): classify_lm_page, discover_document_urls, challenge, Timer, build_session_params
+React SPA (Vite, TS)              FastAPI backend (async)            Self-hosted Chromium
+  CarrierSelect                     POST /sessions      ─┐            (headless, --disable-http2,
+  CredentialForm  ── REST+poll ──►  GET  /sessions/{id}  │ in-memory   in the SAME container;
+  MfaPrompt                         POST /sessions/{id}/mfa│ registry +  direct egress now,
+  DocumentViewer  ◄── PDF bytes ──  GET  …/documents/{id} │ async task  proxy-ready later)
+   (react-pdf)                       status machine ──(asyncio.Queue)──► async Playwright (local)
+  reuses pure core (spike/): classify_lm_page, Timer, docfetch validate/decode, AttemptGuard
 ```
 
 - `POST /sessions` creates a `Session`, returns its id immediately, and launches a
-  **background asyncio task** (its reference **stored on the `Session`** so it is
-  not garbage-collected mid-flight) that drives the login via async Playwright
-  until it hits MFA and sets `AWAITING_MFA`.
-- The task then does a **bounded** wait for the code:
-  `await asyncio.wait_for(code_queue.get(), timeout=MFA_DEADLINE)` with
-  `MFA_DEADLINE = 120s` (below the carrier OTP-expiry window and well under
-  Browserbase's ~10-min CDP-idle drop). On timeout → `FAILED`
-  (`SessionExpiredError`) **and `driver.close()`**. The code is passed via an
-  `asyncio.Queue` (not an `Event` — an Event carries no payload and can't support
-  the 3-try retry). **Single-flight** is enforced by a synchronous status flip to
-  `VERIFYING_MFA` in the `/mfa` handler (event-loop-atomic — no `await` between the
-  `409` check and the flip), so a concurrent duplicate POST gets `409`. No
-  `asyncio.Lock` is needed.
-- `POST /sessions/{id}/mfa` enqueues the code; the task resumes, transitions to a
-  transient `VERIFYING_MFA`, then `FETCHING`, then `READY`.
-- The frontend **polls** `GET /sessions/{id}` for status (≈700 ms interval).
-- **Cleanup is guaranteed:** the task runs its whole flow in a `try/finally` whose
-  `finally` calls `driver.close()` (idempotent) on every terminal path — success,
-  any `CarrierError`, timeout, or `CancelledError`. The TTL sweeper **cancels the
-  task and awaits `driver.close()`** for any session it evicts, so no paid
-  Browserbase session is ever orphaned.
-- The heavy stealth browser lives in **Browserbase, not our backend** — the
-  "hosted somewhere that isn't my machine" answer. The backend holds only the
-  lightweight CDP connection + session state.
-- Session state is **in-memory, single-process** (the YAGNI cut vs. a Redis/worker
-  design). Externalizing it for multi-instance hosting is a documented future step.
+  **background asyncio task** (reference stored on the `Session` so it is not GC'd
+  mid-flight) that drives the login until it hits MFA and sets `AWAITING_MFA`.
+- The task does a **bounded** wait: `asyncio.wait_for(code_queue.get(), MFA_DEADLINE)`,
+  `MFA_DEADLINE = 120s`. On timeout → `FAILED` (`SessionExpiredError`) **and
+  `driver.close()`**. The code travels via an `asyncio.Queue` (payload + 3-try retry).
+  **Single-flight** = a synchronous status flip to `VERIFYING_MFA` in the `/mfa` handler
+  (event-loop-atomic — no `await` between the `409` check and the flip).
+- `POST /sessions/{id}/mfa` enqueues the code; the task resumes → `VERIFYING_MFA` →
+  `FETCHING` → `READY`. The frontend **polls** `GET /sessions/{id}` (~700 ms).
+- **Cleanup is guaranteed:** the task runs in a `try/finally` whose `finally` calls
+  `driver.close()` (idempotent) on every terminal path. The TTL sweeper cancels the task
+  and awaits `driver.close()` for any evicted session.
+- **The browser is ours, in our container** — the "hosted somewhere that isn't my
+  machine" answer is a **deployable container image**, not a managed vendor. The same
+  process holds the browser and the session state (single container), which is exactly
+  why `--disable-http2` is available to us.
+- Session state is **in-memory, single-process** (YAGNI vs. Redis/worker). Externalizing
+  it for multi-instance hosting is a documented future step.
 
 ## 5. Components & file structure
 
-**Backend** (`backend/`, FastAPI, async):
+**Backend** (`backend/`, FastAPI, async) — Part 1 (models/sessions/api/main) is built
+and green. This increment **replaces the Browserbase driver stub with a real
+self-hosted Chromium driver** and adds the LM flow + container.
 
-| File | Responsibility |
-| --- | --- |
-| `backend/main.py` | FastAPI app, CORS pinned to the frontend origin, route registration, lifespan (starts a TTL sweeper for stale sessions). |
-| `backend/api.py` | The 4 route handlers (below). |
-| `backend/sessions.py` | `SessionRegistry` (in-memory dict) + `Session` (status, `asyncio.Queue` for MFA codes, stored task reference, in-memory doc store, typed error, attempt counters) + `SessionManager.run()` orchestration (bounded MFA wait, `try/finally` cleanup) + a TTL sweeper that cancels tasks and closes drivers. |
-| `backend/browser.py` | `BrowserDriver` **Protocol** + `BrowserbaseDriver` (async Playwright over CDP). |
-| `backend/carriers/lm.py` | LM async navigation steps (selectors calibrated live), reusing the pure `classify_lm_page` / `discover_document_urls`. |
-| `backend/models.py` | Pydantic request/response models + the error taxonomy. |
+| File | Responsibility | Status |
+| --- | --- | --- |
+| `backend/main.py` | FastAPI app, CORS, routes, lifespan TTL sweeper. **Edit:** swap the driver factory to `ChromiumDriver` (currently imports `make_browserbase_driver_factory`). | built; edit |
+| `backend/api.py` | The 4 route handlers (§9). | built |
+| `backend/sessions.py` | `SessionRegistry` + `Session` + `SessionManager.run()` (bounded MFA wait, `try/finally` cleanup, TTL sweeper). **Edit:** flip `READY` after the first doc (§8/I3). | built; edit |
+| `backend/browser.py` | `BrowserDriver` Protocol + `FakeDriver`. **Edit:** `DocRef` drops `url` (§5.1). | built; edit |
+| `backend/models.py` | Pydantic models + error taxonomy. | built |
+| `backend/chromium_driver.py` | **NEW.** Real `ChromiumDriver`: async Playwright, `chromium.launch(headless=…, args=["--disable-http2", *proxy/flags])`, persistent context. Implements the Protocol. Replaces `browserbase_driver.py`. | build |
+| `backend/carriers/lm.py` | **NEW.** LM nav with the proven selectors/flow (§6). Reuses pure `classify_lm_page`. | build |
+| `Dockerfile`, `compose.yaml` | **NEW.** Playwright base image (Chromium) + backend; env-driven (§14). | build |
 
-**Reused Phase A core** (`spike/`): `challenge`, `carriers/liberty_mutual` (pure
-classify + discovery), `timing.Timer`, `browserbase.build_session_params`,
-`docfetch` (`is_valid_pdf`, `decode_base64_pdf`).
-**Config change:** `spike/config.py` removes the `lm_username` / `lm_password`
-**fields from the `Config` dataclass** and the corresponding `env[...]` reads from
-`load_config` (not merely the `_REQUIRED` tuple — the fields and reads must go, or
-`load_config` still `KeyError`s). Required env becomes `BROWSERBASE_API_KEY`,
-`BROWSERBASE_PROJECT_ID`, `LM_LOGIN_URL`; `BROWSERBASE_CONTEXT_ID` stays optional.
-`test_config.py` and `.env.example` are updated to match. (Verified safe:
-`build_session_params` reads only project id / proxy / context, not the creds.)
-Done test-first.
-*(Deferred cleanup: rename `spike/` → `core/` once the app stabilizes — not churned now.)*
+**Reused pure core** (`spike/`): `carriers/liberty_mutual.classify_lm_page`,
+`timing.Timer`, `docfetch` (`is_valid_pdf`, `decode_base64_pdf`), `AttemptGuard`.
+(`discover_document_urls` is **not** reused for the policy doc list — on the real page it
+returns only the footer Terms-&-Conditions CDN PDF, not policy docs; see §6.4/B-note.)
+**Config change** (`spike/config.py`): **drop** the `browserbase_api_key` /
+`browserbase_project_id` / `browserbase_context_id` fields + their `load_config` reads
+(the Config has no `lm_username`/`lm_password` fields — creds are runtime-only). **Add**
+(optional, safe defaults): `LM_LOGIN_URL` (required), `HEADLESS` (default true),
+`CHROMIUM_ARGS` (default `--disable-http2`), `PROXY_SERVER`/`PROXY_USERNAME`/
+`PROXY_PASSWORD` (optional — unset ⇒ direct egress). Update `test_config.py`,
+`.env.example` (drop Browserbase keys; document the new keys), and `backend/main.py`.
+Done test-first. *(The `spike/browserbase.py` + `backend/diag_*`/`confirm_h1`/`map_docs`/
+`probe_doc` scripts are parked — not imported by the product path; `confirm_h1` is reused
+once in milestone 0.)*
 
-**Frontend** (`frontend/`, Vite + React + TS):
-
-| File | Responsibility |
-| --- | --- |
-| `src/api.ts` | Typed fetch client: `createSession`, `getStatus`, `submitMfa`, `documentUrl`. |
-| `src/App.tsx` | Flow state mirroring backend status; orchestrates the components + polling. |
-| `src/components/CarrierSelect.tsx` | Carrier dropdown (LM enabled; Geico shown disabled / "coming"). |
-| `src/components/CredentialForm.tsx` | Username + password inputs (password masked). |
-| `src/components/MfaPrompt.tsx` | MFA code input — rendered only at `AWAITING_MFA`. |
-| `src/components/DocumentViewer.tsx` | `react-pdf` viewer + download button. |
-| `src/usePolling.ts` | Status polling hook (interval, stop on terminal state). |
-
-Styling: a centered card, light CSS — decent and clean, not a polish investment.
+**Frontend** (`frontend/`, Vite + React + TS): `src/api.ts`, `src/App.tsx` (flow + poll),
+`components/CarrierSelect.tsx` (LM enabled, Geico disabled), `components/CredentialForm.tsx`
+(masked password), `components/MfaPrompt.tsx` (only at `AWAITING_MFA`),
+`components/DocumentViewer.tsx` (react-pdf + download), `usePolling.ts`. Centered card.
 
 ### 5.1 BrowserDriver Protocol (the test seam)
 
@@ -159,221 +163,287 @@ class AuthStep(StrEnum):
     AUTHENTICATED = "AUTHENTICATED"
 
 class BrowserDriver(Protocol):
-    async def open_login(self, login_url: str) -> None: ...          # raises BotChallengeError
-    async def submit_credentials(self, username: str, password: str) -> AuthStep: ...  # raises CarrierAuthError
+    async def open_login(self, login_url: str) -> None: ...           # raises BotChallengeError
+    async def submit_credentials(self, username: str, password: str) -> AuthStep: ...  # CarrierAuthError
     async def submit_mfa(self, code: str) -> AuthStep: ...            # raises MfaError
-    async def list_documents(self) -> list[DocumentRef]: ...         # raises DocFetchError
-    async def fetch_document(self, ref: DocumentRef) -> bytes: ...    # proxied; raises DocFetchError
+    async def list_documents(self) -> list[DocRef]: ...              # raises DocFetchError
+    async def fetch_document(self, ref: DocRef) -> FetchedDoc: ...    # raises DocFetchError
     async def close(self) -> None: ...
 ```
 
-`BrowserbaseDriver` implements this against a live remote browser; `FakeDriver`
-(tests) implements it with configurable canned behaviors. To exercise the
-orchestration's hardest paths (not just happy/typed-error outcomes), `FakeDriver`
-must be able to simulate: **success, bot-block, auth-fail, mfa-fail, doc-fail,** a
-**slow/hanging step** (to drive the MFA-deadline timeout and task cancellation), a
-step that raises **`asyncio.CancelledError`**, and a step that raises a
-**connection-lost error mid-fetch**. A Protocol contract test asserts
-`close()` is **idempotent and called on every terminal path** (success, fail,
-timeout, cancel). The entire `SessionManager` orchestration is tested against
-`FakeDriver` — no network, deterministic (fake clock).
+**`DocRef` identity (corrected per review B1):** `DocRef` is `{doc_id, name}` — **no
+`url`**. For LM the PDF URL does not exist in the DOM; it is minted (with a per-click
+UUID) only when a "View / print" control is clicked. So a document's stable identity is
+its **position** among the documents-page actions: `list_documents` enumerates the
+"View / print" controls and returns `DocRef(doc_id=str(index), name=<card text>)`;
+`fetch_document(ref)` re-locates the `ref.doc_id`-th control, clicks it, and captures the
+PDF (§7). The orchestration already keys by `ref.doc_id` and never reads a url
+(`sessions.py:131`), so this is a driver-local change.
 
-### 5.2 New dependencies (exact-pinned, lockfiles committed)
+`ChromiumDriver` implements this against a live local Chromium; `FakeDriver` (tests) with
+canned behaviors — success, bot-block, auth-fail, mfa-fail, doc-fail, a **slow/hanging**
+step (drives the MFA-deadline timeout + cancellation), a step raising
+**`asyncio.CancelledError`**, and a **connection-lost** mid-fetch. A contract test asserts
+`close()` is **idempotent and called on every terminal path**. The entire `SessionManager`
+is tested against `FakeDriver` — no network, fake clock.
 
-The async backend needs deps not yet present. Add via `uv add` (pins into
-`uv.lock`): **`fastapi`**, **`uvicorn`** (runtime); **`pytest-asyncio`**
-(or `anyio` pytest mode) and **`httpx`** (FastAPI `TestClient` transport) (dev).
-Set `[tool.pytest.ini_options] asyncio_mode = "auto"`. Frontend (`frontend/`, its
-own `package.json` + lockfile): `react`, `react-dom`, `react-pdf`, `vite`,
-`typescript`, and dev `vitest` + `@testing-library/react` + `eslint`. Without these
-the async TDD plan cannot run.
+## 6. The proven Liberty Mutual flow (calibrated, not assumed)
 
-## 6. State machine & API contract
+`ChromiumDriver` + `carriers/lm.py` implement exactly this, observed live:
+
+1. **open_login:** `goto(LM_LOGIN_URL)` (`https://www.libertymutual.com/log-in`) → click
+   the **"Log in"** link → wait for `input[name=username]`. (If a hard block appears
+   instead, raise `BotChallengeError` — defensive.)
+2. **submit_credentials:** fill `input[name=username]` + `input[name=password]` → click
+   `button[type=submit]`. Detect outcome by polling up to ~30s: `/u/mfa-sms-challenge` or
+   a visible OTP field ⇒ `NEEDS_MFA`; "something went wrong" ⇒ block/`CarrierAuthError`.
+   **Exactly one password submission per session** (lockout rail, §15).
+3. **submit_mfa:** locate the OTP field (`input[autocomplete=one-time-code]` /
+   `input[name*=code]`), **type the code digit-by-digit** (`press_sequentially`, *not*
+   `fill` — Auth0's "Continue" un-disables only on real keystrokes) → press **Enter**.
+   Success = leaving `login.libertymutual.com`, settling on
+   `eservice.libertymutual.com/accountmanager/...` ⇒ `AUTHENTICATED`. Up to **3** code
+   attempts per session.
+4. **list_documents:** `goto(/accountmanager/documents)`, wait for `DOCUMENTS`, enumerate
+   the visible **"View / print"** controls (**action-based, not label-based** — the
+   button text is empty; the name comes from the enclosing policy card). Each becomes
+   `DocRef(doc_id=str(index), name=<card text>)` — no url (§5.1). *(Do not use
+   `discover_document_urls` here — on the real page it returns only the footer T&C CDN
+   PDF, not policy docs.)*
+5. **fetch_document:** **register the capture before clicking** — wrap the click in
+   `expect_response`(url contains `/document/download/`, ct `application/pdf`) /
+   `expect_popup`, bounded timeout; re-locate the `doc_id`-th "View / print" and click;
+   read the captured response `body()`. **Fallbacks:** a `download` event ⇒
+   `expect_download` → read the file; if needed, re-`GET` the captured URL via
+   **`context.request.get`** (same cookie jar + egress — allowed). **Never** an
+   out-of-band client (`httpx`/separate `APIRequestContext`) — bypasses the browser's
+   (later residential) egress (§16).
+
+## 7. Doc-fetch mechanism (resolved) — proxy the bytes
+
+Two reasons we fetch bytes server-side instead of handing the client a URL: (1) **no
+stable URL exists** — LM mints the download URL (per-click UUID) only on click; and (2)
+even that URL is gated by the **session cookie in our hosted browser**, which the user's
+browser lacks (a forwarded URL would 401). Mechanism (proven, with §6.5 robustness):
+clicking "View / print" opens a popup that issues a same-origin GET returning
+`application/pdf` (`Content-Disposition: inline`); we capture that response (listener
+registered **before** the click, at the **context** level since it fires on the popup),
+read `body()`, store the bytes on the `Session`, and serve them via
+`GET /sessions/{id}/documents/{doc_id}`. Capturing the response (vs. an in-page
+`fetch`→base64) also avoids ~33% inflation.
+
+## 8. State machine
 
 ```
-STARTING ──┬─ open_login raises BotChallenge ─► FAILED (BotChallengeError + §7.1 fields)
+STARTING ──┬─ open_login raises BotChallenge ─► FAILED (BotChallengeError + §11 fields)
            ├─ submit_credentials raises Auth  ─► FAILED (CarrierAuthError)
            └─ AuthStep.NEEDS_MFA              ─► AWAITING_MFA
-AWAITING_MFA ──┬─ no code within MFA_DEADLINE (120s) ─► FAILED (SessionExpiredError) + driver.close()
-               └─ code enqueued ─► VERIFYING_MFA  (single-flight lock; further /mfa POSTs get 409)
+AWAITING_MFA ──┬─ no code within MFA_DEADLINE (120s) ─► FAILED (SessionExpiredError) + close()
+               └─ code enqueued ─► VERIFYING_MFA  (single-flight; further /mfa POSTs ⇒ 409)
 VERIFYING_MFA ──┬─ submit_mfa raises, attempts < 3 ─► AWAITING_MFA (await next code)
                 ├─ submit_mfa raises, attempts == 3 ─► FAILED (MfaError)
                 └─ AuthStep.AUTHENTICATED ─► FETCHING
 FETCHING ──┬─ list/fetch raises ─► FAILED (DocFetchError)
-           └─► READY  (all discovered docs' bytes fetched into the store; latency recorded at first doc)
-(any non-terminal) ── task cancelled / TTL-swept ─► driver.close(); GET returns FAILED (SessionExpiredError)
+           ├─ FIRST doc's bytes captured ─► READY (servable now; latency recorded here)
+           └─ task keeps fetching the rest in the same open browser, then close()
+(any non-terminal) ── task cancelled / TTL-swept ─► driver.close(); GET returns FAILED
 ```
 
-**Fetch strategy (latency-honest):** during `FETCHING` the manager calls
-`list_documents()` and fetches **all discovered documents' bytes** into the session
-store, then sets `READY`. (The live browser is **closed at `READY`** per the
-cleanup rule, so there is no live session to lazily fetch from afterward — fetching
-all up front is the correct trade for prompt browser teardown.) The graded
-`latency_ms` is recorded at the **first** document fetched, so the metric reflects
-single-document cost, not an N-document aggregate. Typical personal-lines accounts
-have only a few documents; **incremental "render-first-then-stream-the-rest"** is a
-documented follow-up if document counts make the all-up-front fetch slow. A
-duplicate identical MFA
-code submitted while `VERIFYING_MFA` does **not** burn a retry (rejected with
-`409`); only a *distinct* attempt that the carrier rejects counts toward the 3-try
-cap. **Retention:** `READY` is terminal-for-serving but **retains** its document
-bytes until the TTL (15 min) elapses — bytes are evicted at TTL, not on entry to
-`READY` (so the user can actually fetch them).
+**Fetch strategy (latency-honest; revised per review I3):** flip to `READY` as soon as
+the **first** document's bytes are captured — so the user can render it immediately and
+`latency_ms` reflects real first-doc cost — then **keep fetching the remaining docs in
+the same still-open browser**, closing only after the last (or on TTL/cancel). The status
+payload's `documents` list grows as each becomes servable; `GET …/documents/{id}` serves
+a doc once present (404 until then, 409 until `READY`). This "render-first,
+stream-the-rest" is **required, not deferred**: the prior "all docs before READY" design
+gated first-doc render on **total** fetch time (GET is 409 until READY), which would
+silently blow the graded 8s metric for multi-doc accounts. A duplicate identical MFA code
+submitted while `VERIFYING_MFA` is rejected with `409` and does **not** burn a retry.
+**Retention:** bytes are retained until the TTL (15 min), evicted at TTL (so the user can
+actually fetch them).
 
-**Endpoints:**
+## 9. API contract
 
 | Method/Path | Request | Response |
 | --- | --- | --- |
-| `POST /sessions` | `{carrier: "liberty_mutual", username, password}` | `201 {session_id, status:"STARTING"}` |
-| `GET /sessions/{id}` | — | `200 {session_id, status, mfa_required, documents?:[{doc_id,name}], error?:{type,message}, latency_ms?}` |
-| `POST /sessions/{id}/mfa` | `{code}` | `200 {session_id, status}`; `409` if not `AWAITING_MFA` (e.g. mid-`VERIFYING_MFA` — covers the double-submit race); typed `MfaError` (HTTP 409) if the 3-try cap is exhausted |
-| `GET /sessions/{id}/documents/{doc_id}` | optional `?download=1` | `200 application/pdf` (inline, or attachment if download). Serves bytes cached during `FETCHING`. `404` unknown/uncached doc; `409` if session not `READY`. |
+| `POST /sessions` | `{carrier:"liberty_mutual", username, password}` | `201 {session_id, status:"STARTING"}` |
+| `GET /sessions/{id}` | — | `200 {session_id, status, mfa_required, documents?:[{doc_id,name}] (grows as docs stream), error?:{type,message}, latency_ms?}` |
+| `POST /sessions/{id}/mfa` | `{code}` | `200 {session_id, status}`; `409` if not `AWAITING_MFA`; typed `MfaError` once the 3-try cap is exhausted |
+| `GET /sessions/{id}/documents/{doc_id}` | optional `?download=1` | `200 application/pdf`. `409` if not `READY`; `404` if that doc isn't captured yet. |
 
-`carrier` is an enum (`liberty_mutual`) so adding Geico later is additive.
+`carrier` is an enum so adding Geico is additive.
 
-## 7. Error taxonomy
+## 10. Error taxonomy
 
 ```python
 class CarrierError(Exception): ...                 # base
-class BotChallengeError(CarrierError): ...         # carries challenge.to_fields(...)
+class BotChallengeError(CarrierError): ...         # challenge fields (defensive/edge now)
 class CarrierAuthError(CarrierError): ...          # credentials rejected
-class MfaError(CarrierError): ...                  # code rejected (distinct from expiry)
+class MfaError(CarrierError): ...                  # code rejected
 class DocFetchError(CarrierError): ...             # discovery/fetch failed
-class SessionExpiredError(CarrierError): ...       # MFA deadline / TTL sweep / task cancelled
+class SessionExpiredError(CarrierError): ...       # MFA deadline / TTL sweep / cancel
 ```
 
-The background task catches `CarrierError` subclasses and sets `Session.status =
-FAILED` with `Session.error = {type: <ClassName>, message: <safe message>}`.
-Callers (frontend) branch on `error.type`, never on message text. No secrets in
-messages. Any other (unexpected) exception → `FAILED` with a generic
-`{type:"InternalError"}` and a logged stack trace (no creds).
+The task catches `CarrierError` subclasses → `FAILED` with `error = {type:<ClassName>,
+message:<safe>}`. Frontend branches on `error.type`, never message text. No secrets in
+messages. Unexpected exception → `FAILED {type:"InternalError"}` + logged stack (no creds).
 
-### 7.1 Structured bot-challenge fields
-On `BotChallengeError`, the error payload includes the `challenge.to_fields(...)`
-record (kind, url, status, `_abck` state, has_captcha) so a negative gate result is
-precisely classified.
+### 11. Structured bot-challenge fields
+If `BotChallengeError` fires, the payload includes the challenge record (kind, url,
+status, sensor state, has_captcha). Defensive — the spike showed the sensor accepting us.
 
-## 8. Security & secrets
+## 12. Security & secrets
 
-- Credentials arrive in the `POST /sessions` body, are passed transiently to the
-  driver, and are **never persisted and never logged**. The password is excluded
-  from all logging; request bodies are not logged.
-- Session state + fetched PDF bytes live **in memory only**, evicted on terminal
-  state and by a TTL sweeper (default 15 min). No database, no disk writes of PII.
-- `BROWSERBASE_API_KEY` / `BROWSERBASE_PROJECT_ID` / `LM_LOGIN_URL` from env
-  (`.env`, git-ignored; `.env.example` documents keys). The API key never leaves
-  the backend.
-- **Browserbase per-session `connect_url` / `debuggerUrl` / `wsUrl` / Live View
-  URLs are live bearer credentials** — anyone holding one can watch and drive the
-  authenticated session. They are **never logged** and never returned to the
-  frontend. Structlog binds only our own `session_id`, never the connect URL.
-- **Transport:** local dev over `http://localhost` is the only sanctioned
-  transport for this version (a conscious YAGNI cut); any hosted deployment
-  **requires TLS** in front of the backend, since credentials travel in the
-  `POST /sessions` body.
-- CORS pinned to the frontend dev origin. Structured logging (structlog) with
-  stable fields (`session_id`, `carrier`, `state`) — never credentials, never
-  connect URLs. The password is excluded from all logging; request bodies are not
-  logged.
+- Credentials arrive in the `POST /sessions` body, pass transiently to the driver,
+  **never persisted, never logged**. Password excluded from all logging; request bodies
+  not logged.
+- Session state + fetched PDF bytes live **in memory only**, evicted on terminal state
+  and by the TTL sweeper (15 min). No DB, no disk PII.
+- Env (`.env`, git-ignored; `.env.example` documents keys): `LM_LOGIN_URL` (required);
+  `HEADLESS`, `CHROMIUM_ARGS`, `PROXY_*` (optional). **Proxy creds are secret**, never
+  logged. No Browserbase keys anymore.
+- The session-reuse artifact (`storage_state`, when that increment lands) holds live
+  tokens → in-memory or git-ignored only, never committed. The captured popup PDF bytes
+  are in-memory only.
+- **Transport:** local dev over `http://localhost` only; any hosted deployment **requires
+  TLS** in front of the backend (credentials travel in the POST body).
+- CORS pinned to the frontend origin. Structured logging (structlog) with stable fields
+  (`session_id`, `carrier`, `state`) — never credentials, never proxy creds.
 
-## 9. Lockout rail (carried from the spike)
+## 13. Residential proxy plan (deferred, proxy-ready)
 
-Auth0 locks regardless of IP (~10 attempts). Therefore: **exactly one password
-submission per session** (the `AttemptGuard` enforces it); a rejected login → tear
-down the session as `FAILED`, no retry. MFA codes may be re-entered up to **3×
-within the same session** (no new password submission — MFA entry does not feed the
-password-lockout counter). Use only a **consented, expendable** LM account; confirm
-the owner accepts possible lockout/fraud-alert risk before any run.
+Decision (user): **direct/default egress this increment; add residential proxy only after
+the build is tested.** Evidence supports it — the datacenter IP already cleared LM's
+sensor, so residential is robustness/realism, not necessity.
 
-## 10. Testing strategy
+- The driver reads `PROXY_*` from env and, if set, passes `proxy={server, username,
+  password}` to the Chromium context — **off by default**. Enabling it later is `.env` +
+  a flag, no code change (preserves dev/prod parity).
+- A standard CONNECT proxy tunnels TLS to Cloudflare, so `--disable-http2` still forces
+  HTTP/1.1 at the browser — the fix holds. **Verified once** (one login through the proxy)
+  before building on it.
+- **Pre-committed decision rule (set before measuring):** when the proxy is enabled, we
+  measure MFA→docs latency; **if it exceeds 8s, the proxy comes off the doc-fetch hop (or
+  moves to a faster tier) — it does not silently blow the budget.**
+- Provider + credentials are a later, user-provided dependency.
 
-- **Backend orchestration (TDD core):** `SessionRegistry` + `SessionManager` + all
-  state transitions + the MFA `asyncio.Event` handoff + the 1-password rail + the
-  MFA-retry cap + error mapping — unit-tested against an injected `FakeDriver`,
-  with a fake clock (reuse `spike.timing.Timer`) for latency. No network.
-- **API:** FastAPI `TestClient` + `FakeDriver` — each endpoint returns the right
-  status codes and payloads across success and every failure path.
-- **Real `BrowserbaseDriver`:** integration/live, validated by the actual run (the
-  gate). LM selectors calibrated live via Browserbase Live View. Not in CI (needs
-  real creds, MFA, a paid browser).
-- **Frontend:** light component tests (e.g., `MfaPrompt` renders only at
-  `AWAITING_MFA`; `DocumentViewer` only at `READY`) via Vitest + Testing Library;
-  the full flow validated manually through the real run.
+## 14. Dev/prod parity & containerization
+
+Requirement (user): **the local build mimics the deployed version.** One container image,
+env-driven, runs identically in both places.
+
+- **Image:** a Playwright base image (Chromium + system libs) + our backend; launches
+  Chromium `headless, args=["--disable-http2", …]`. No env-specific code path. Mind the
+  Chromium-in-Docker gotchas: `--no-sandbox` (or proper sandboxing), adequate
+  `/dev/shm` (`--disable-dev-shm-usage` or a larger shm), fonts for PDF render.
+- **Local:** `docker compose up` runs that exact image; the frontend dev server points at
+  it. **Deployed:** the same image on a cloud **VM** (datacenter IP now; residential proxy
+  later). "Not your machine" = the image is deployable off-machine.
+- **The frontend is decoupled** from this container (static React build — Vite dev server
+  locally; static files served by the backend or any static host when deployed).
+- **Both the milestone-0 gate and the step-7 UI run happen *in the container*** on the VM
+  (deployment-shaped), not native. Config strictly via env; secrets never baked into the
+  image.
+
+## 15. Lockout rail (carried from the spike)
+
+Auth0 locks regardless of IP (~10 attempts). **Exactly one password submission per
+session** (`AttemptGuard`); a rejected login tears the session down as `FAILED`, no retry.
+MFA codes may be re-entered up to **3×** within a session (no new password submission —
+MFA entry does not feed the password-lockout counter). Use only a **consented, expendable**
+LM account; confirm the owner accepts possible lockout/fraud-alert risk before any run.
+
+## 16. Testing strategy
+
+- **Backend orchestration (TDD core, already green):** `SessionRegistry` +
+  `SessionManager` + all transitions + the MFA `asyncio.Queue` handoff + the 1-password
+  rail + the 3-try cap + error mapping — against `FakeDriver`, fake clock, no network.
+  **Add** a test for the new READY-after-first-doc behavior (§8) and for `DocRef` without
+  `url`.
+- **API:** FastAPI `TestClient` + `FakeDriver` — each endpoint × success/failure, incl.
+  the 409/404 doc-serving rules.
+- **`carriers/lm.py` parsing helpers (doc-list extraction):** unit-tested against a **real
+  captured fixture** of the `/accountmanager/documents` HTML (saved from the authenticated
+  session via the spike's session reuse — the existing `tests/fixtures/lm/documents*.html`
+  are fabricated `.pdf`-anchor toys that do **not** match the real button-based DOM and
+  **must be replaced**). Offline, no network.
+- **`ChromiumDriver`:** integration/live, validated by the in-container run (milestone 0 +
+  step 7). Not in CI (needs real creds + MFA + a browser).
+- **Frontend:** light component tests (`MfaPrompt` only at `AWAITING_MFA`; `DocumentViewer`
+  only at `READY`) via Vitest + Testing Library; full flow via the real run.
 - Quality bar: backend `ruff` + `mypy --strict` + `pytest`; frontend `eslint` +
-  `tsc --noEmit` + `vitest`. Exact-pinned deps + committed lockfiles.
+  `tsc --noEmit` + `vitest`. Exact-pinned deps + committed lockfiles. **Do NOT** re-fetch
+  docs via a separate **out-of-band** client (`httpx`/separate `APIRequestContext`) — that
+  bypasses the browser's (later proxied) egress; capturing the in-browser `application/pdf`
+  response is primary, `context.request.get` (same cookie jar + egress) an acceptable
+  fallback.
 
-## 11. Latency measurement (pre-committed before the run)
+## 17. Latency measurement (pre-committed)
 
-The brief grades **MFA-submit → document on screen**, so we report two numbers,
-labelled, and pre-commit the definition now to avoid post-hoc rationalizing:
+The brief grades **MFA-submit → document on screen**; report two labelled numbers:
 
-- **Primary (graded):** MFA-submit → **first document rendered** — a client-side
-  mark taken at react-pdf's `onRenderSuccess`, minus the MFA-submit timestamp.
-  This includes the poll-cycle delay and the `GET …/documents` transfer, i.e. what
-  the user actually experiences.
-- **Server-side sub-metric:** MFA-submit → **first bytes in hand** (`READY`),
-  measured via `spike.timing.Timer` wired in production with **`time.monotonic`**
-  (tests inject a fake clock). `start` is recorded on the `/mfa` **request path**
-  at code receipt (not inside the task, to avoid a resume race); `stop` at the
-  `READY` transition. The `Timer.stop` read is guarded so a missing `start` never
-  masks the underlying error. Exposed as `latency_ms` in the status payload.
+- **Primary (graded):** MFA-submit → **first document rendered** — a client mark at
+  react-pdf's `onRenderSuccess`, minus the MFA-submit timestamp (includes poll-cycle +
+  `GET …/documents` transfer). Because `READY` now fires at the first doc (§8), this is
+  **not** gated by total fetch time.
+- **Server sub-metric:** MFA-submit → **first bytes in hand** (`READY`), via
+  `spike.timing.Timer` with `time.monotonic` (tests inject a fake clock). `start` recorded
+  on the `/mfa` request path at code receipt; `stop` at `READY`. Exposed as `latency_ms`.
 
-Report cold-session numbers honestly — first-run Browserbase startup + the
-residential-proxy tax are included and noted. The metric is about the **first**
-document (the gate needs ≥1 PDF), not an N-document aggregate.
+Report honestly: this increment is **direct egress** (no proxy tax); residential-proxy
+latency is measured separately when §13 lands. The metric is the **first** doc.
 
-## 12. Authorization (carried from spike §9)
+## 18. Authorization (carried from the spike)
 
-Sanctioned take-home pulling the **account owner's own documents with explicit
-consent** on an **expendable** account; LM's ToS prohibition on automated retrieval
-is acknowledged as a conscious, time-boxed exercise decision, documented rather than
-glossed. Not a model for unconsented or third-party collection.
+Sanctioned take-home pulling the **account owner's own documents with explicit consent** on
+an **expendable** account; LM's ToS prohibition on automated retrieval is a conscious,
+time-boxed exercise decision, documented rather than glossed. Not a model for unconsented
+or third-party collection.
 
-## 13. Build sequence (preview for the plan)
+## 19. Build sequence (preview for the plan)
 
-0. Add + pin deps (§5.2): `fastapi`, `uvicorn`; dev `pytest-asyncio` + `httpx`;
-   set `asyncio_mode = "auto"`. Commit `uv.lock`.
-1. `spike/config.py` — remove `lm_username`/`lm_password` fields + reads; update
-   `test_config.py` + `.env.example` (TDD).
-2. `backend/models.py` — Pydantic models + error taxonomy incl. `SessionExpiredError` (TDD).
-3. `backend/sessions.py` — `SessionRegistry` + `Session` (code `Queue`, single-flight
-   `Lock`, stored task ref) + `SessionManager` + `FakeDriver`: full state-machine
-   orchestration incl. `VERIFYING_MFA`, bounded MFA-deadline timeout, `try/finally`
-   `driver.close()`, task cancellation, and the TTL sweeper. TDD with the expanded
-   FakeDriver scenarios (hang/cancel/connection-loss) — the bulk of the logic.
-4. `backend/api.py` + `backend/main.py` — endpoints + CORS + lifespan sweeper
-   (TDD via async `TestClient` + FakeDriver), incl. the double-submit `409` path.
-5. `backend/browser.py` + `backend/carriers/lm.py` — real `BrowserbaseDriver`
-   (async Playwright/CDP, proxied in-page fetch) + async LM nav, **including any
-   document-discovery logic change** (live calibration; see §14).
-6. `frontend/` — Vite scaffold, API client, components, polling (stop on
-   READY/FAILED/repeated-404), react-pdf with `onRenderSuccess` latency mark
-   (light tests).
-7. Live end-to-end run = the gate; capture results + both latency numbers + any
-   structured bot-challenge classification; go/no-go for Geico.
+0. **GATE — do this first, before the product: datacenter login on a VM.** Containerize the
+   proven `confirm_h1` login (Chromium + `--disable-http2`, headless) and run it once on a
+   cheap cloud VM (datacenter IP, direct egress): one real login → MFA → account.
+   **PASS** ⇒ the central bet (datacenter + `--disable-http2` logs in) *and* the
+   Chromium-in-Docker shape are proven; build the product. **FAIL** ⇒ stop and reassess —
+   a cheap negative before the frontend, per "prove cheaply before scaling."
+1. `spike/config.py` — drop Browserbase fields; add `LM_LOGIN_URL`/`HEADLESS`/
+   `CHROMIUM_ARGS`/`PROXY_*`; update `test_config.py`, `.env.example`, `backend/main.py`
+   (TDD).
+2. `backend/chromium_driver.py` — `ChromiumDriver` (async Playwright, `--disable-http2`,
+   optional proxy, persistent context, idempotent `close()`). Implements the Protocol.
+3. `backend/carriers/lm.py` — the proven flow (§6): open/creds/MFA(type+Enter)/docs-list/
+   fetch-capture (with the §6.5 robustness). Doc-list extraction unit-tested against the
+   **real captured fixture** (TDD).
+4. Wire `ChromiumDriver` into `SessionManager` (replace the stub); implement the
+   READY-after-first-doc change (§8/I3); confirm existing orchestration tests stay green +
+   add the new ones.
+5. `Dockerfile` + `compose.yaml` — Playwright base image, env-driven; backend up
+   in-container (reuse the milestone-0 image).
+6. `frontend/` — Vite scaffold, typed API client, components, polling, react-pdf with the
+   `onRenderSuccess` latency mark (light tests).
+7. **Live in-container UI run** (datacenter VM) — the full-UX re-proof (the datacenter risk
+   is already retired at milestone 0); capture both latency numbers + a screenshot/sample
+   PDF; go/no-go for the proxy increment + Geico.
 
-## 14. Open risks
+## 20. Open risks
 
-- **Gate-first tension:** we are building app scaffolding before proving hosted
-  access. Mitigated by (a) the first real run being the gate, (b) the heavy
-  testable logic being browser-independent (FakeDriver), so a bot-block failure
-  wastes minimal work, and (c) the structured failure classification making a
-  negative result actionable.
-- **Bot detection may still block us** — the core unknown, unchanged from the spike.
-- **Single-process in-memory state** is fine for this minimal/local-but-hosting-shaped
-  version; multi-instance hosting needs externalized sessions (documented, deferred).
-- **LM selectors are unknown until live** — calibrated in build step 5; the
-  orchestration is selector-independent.
-- **Document discovery may need a logic change, not just constants (gate risk).**
-  `discover_document_urls` currently matches only `.pdf`-suffixed `<a href>`s. A
-  real LM React SPA may expose documents via XHR/JSON, JS click handlers, or
-  suffix-less download URLs (`/documents/download?id=…`), in which case build
-  step 5 must extend discovery (e.g. intercept the network response, or match
-  download-endpoint patterns) — the pure function gets a new path, not just new
-  constants. The gate's "≥1 PDF" hinges on this, so it is calibrated/​verified
-  live, not assumed.
-- **Do NOT "simplify" the proxied in-page fetch to `page.request`/`APIRequestContext`.**
-  That shares cookies but egresses from our *client* IP, bypassing the residential
-  proxy and defeating the whole hosted-access thesis (see spike spec §5.3). The
-  in-page `fetch`→base64 is the correct, intentional choice; for very large PDFs
-  prefer navigate-and-capture over base64 to avoid the ~33% inflation.
+- **No datacenter end-to-end login observed yet (central bet):** all end-to-end proofs were
+  on a residential dev IP; datacenter runs only ever failed at the (now-fixed) H2 error.
+  Strong inference (sensor accepts datacenter IPs), not yet observation — **retired by
+  milestone 0** (§19) before any product code.
+- **Chromium-in-Docker parity:** headless Chromium + `--disable-http2` must behave in the
+  container as native (shm, sandbox flags, fonts — §14). Proven by milestone 0 (and step
+  7), not just asserted.
+- **Doc-fetch robustness across policy types:** capture proven on a homeowners "View /
+  print" (inline `application/pdf`). Auto/other policies may differ; `list_documents` keys
+  on the **action** + `application/pdf`/`download` capture (not labels), with a
+  `context.request.get` fallback (§6.5). Calibrated against the real page.
+- **Selector drift:** isolated in `carriers/lm.py`; the orchestration is selector-independent.
+- **`--disable-http2` is a transport workaround** (forces HTTP/1.1 for the whole browser,
+  incl. the eservice/docs domain). Acceptable (LM serves fine over 1.1); intentional trade.
+- **Proxy latency (when §13 lands):** residential egress may pressure the 8s budget — hence
+  the pre-committed decision rule (§13), measured not assumed.
+- **Single-process in-memory state** is fine for this minimal/hosting-shaped version;
+  multi-instance hosting needs externalized sessions (documented, deferred).
