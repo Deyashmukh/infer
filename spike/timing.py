@@ -20,4 +20,4 @@ class Timer:
         return elapsed
 
     def to_dict(self) -> dict[str, float]:
-        return dict(self.durations)
+        return dict(self.durations)  # copy — callers must not mutate internal state

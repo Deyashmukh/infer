@@ -23,12 +23,11 @@ class ChallengeKind(StrEnum):
     def to_fields(self, signals: ChallengeSignals) -> dict[str, object]:
         """Structured failure record for RESULTS.md (spec §8)."""
         abck = signals.cookies.get("_abck")
-        abck_state: str = f"_abck={abck}" if abck is not None else "<absent>"
         return {
             "kind": self.value,
             "url": signals.url,
             "status": signals.status,
-            "abck_state": abck_state,
+            "abck_state": f"_abck={abck}" if abck is not None else "<absent>",
             "has_captcha": signals.has_captcha,
         }
 

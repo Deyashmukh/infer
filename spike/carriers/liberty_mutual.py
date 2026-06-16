@@ -16,6 +16,10 @@ def _matches_any(html: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(p, html, re.IGNORECASE) for p in patterns)
 
 
+def _matches_all(html: str, patterns: tuple[str, ...]) -> bool:
+    return all(re.search(p, html, re.IGNORECASE) for p in patterns)
+
+
 class LMPageState(StrEnum):
     LOGIN_FORM = "LOGIN_FORM"
     MFA_PROMPT = "MFA_PROMPT"
@@ -28,7 +32,7 @@ def classify_lm_page(html: str, url: str) -> LMPageState:
         return LMPageState.MFA_PROMPT
     if _matches_any(html, _DOCS_MARKERS):
         return LMPageState.DOCUMENTS
-    if all(re.search(p, html, re.IGNORECASE) for p in _LOGIN_MARKERS):
+    if _matches_all(html, _LOGIN_MARKERS):
         return LMPageState.LOGIN_FORM
     return LMPageState.OTHER
 
@@ -64,9 +68,11 @@ class _AnchorParser(HTMLParser):
 def discover_document_urls(html: str, base_url: str) -> list[DocumentRef]:
     parser = _AnchorParser()
     parser.feed(html)
+    # Ensure base_url ends with "/" so urljoin treats it as a directory, not a file.
+    base = base_url.rstrip("/") + "/"
     refs: list[DocumentRef] = []
     for href, text in parser.links:
-        absolute = urljoin(base_url + "/", href)
+        absolute = urljoin(base, href)
         if absolute.lower().endswith(".pdf"):
             refs.append(DocumentRef(name=text or absolute, url=absolute))
     return refs

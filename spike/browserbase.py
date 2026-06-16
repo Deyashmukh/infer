@@ -16,11 +16,10 @@ def build_session_params(
     (Browserbase "Verified", Scale-gated) is an escalation lever, off by default
     per the start-cheap budget posture (spec §2).
     """
-    browser_settings: dict[str, Any] = {}
-    if context_id is not None:
-        browser_settings["context"] = {"id": context_id, "persist": True}
-    if advanced_stealth:
-        browser_settings["advancedStealth"] = True
+    browser_settings: dict[str, Any] = {
+        **({"context": {"id": context_id, "persist": True}} if context_id is not None else {}),
+        **({"advancedStealth": True} if advanced_stealth else {}),
+    }
     return {
         "projectId": config.browserbase_project_id,
         "proxies": [{"type": "browserbase", "geolocation": {"country": "US"}}],
