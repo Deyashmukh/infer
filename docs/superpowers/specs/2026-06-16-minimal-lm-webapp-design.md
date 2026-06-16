@@ -93,7 +93,10 @@ React SPA (Vite, TS)                 FastAPI backend (async)              Browse
   Browserbase's ~10-min CDP-idle drop). On timeout → `FAILED`
   (`SessionExpiredError`) **and `driver.close()`**. The code is passed via an
   `asyncio.Queue` (not an `Event` — an Event carries no payload and can't support
-  the 3-try retry), guarded by a single-flight `asyncio.Lock`.
+  the 3-try retry). **Single-flight** is enforced by a synchronous status flip to
+  `VERIFYING_MFA` in the `/mfa` handler (event-loop-atomic — no `await` between the
+  `409` check and the flip), so a concurrent duplicate POST gets `409`. No
+  `asyncio.Lock` is needed.
 - `POST /sessions/{id}/mfa` enqueues the code; the task resumes, transitions to a
   transient `VERIFYING_MFA`, then `FETCHING`, then `READY`.
 - The frontend **polls** `GET /sessions/{id}` for status (≈700 ms interval).
@@ -116,7 +119,7 @@ React SPA (Vite, TS)                 FastAPI backend (async)              Browse
 | --- | --- |
 | `backend/main.py` | FastAPI app, CORS pinned to the frontend origin, route registration, lifespan (starts a TTL sweeper for stale sessions). |
 | `backend/api.py` | The 4 route handlers (below). |
-| `backend/sessions.py` | `SessionRegistry` (in-memory dict) + `Session` (status, `asyncio.Queue` for MFA codes, single-flight `asyncio.Lock`, stored task reference, in-memory doc store, typed error, attempt guards) + `SessionManager.run()` orchestration (bounded MFA wait, `try/finally` cleanup) + a TTL sweeper that cancels tasks and closes drivers. |
+| `backend/sessions.py` | `SessionRegistry` (in-memory dict) + `Session` (status, `asyncio.Queue` for MFA codes, stored task reference, in-memory doc store, typed error, attempt counters) + `SessionManager.run()` orchestration (bounded MFA wait, `try/finally` cleanup) + a TTL sweeper that cancels tasks and closes drivers. |
 | `backend/browser.py` | `BrowserDriver` **Protocol** + `BrowserbaseDriver` (async Playwright over CDP). |
 | `backend/carriers/lm.py` | LM async navigation steps (selectors calibrated live), reusing the pure `classify_lm_page` / `discover_document_urls`. |
 | `backend/models.py` | Pydantic request/response models + the error taxonomy. |
@@ -197,16 +200,20 @@ VERIFYING_MFA ──┬─ submit_mfa raises, attempts < 3 ─► AWAITING_MFA (
                 ├─ submit_mfa raises, attempts == 3 ─► FAILED (MfaError)
                 └─ AuthStep.AUTHENTICATED ─► FETCHING
 FETCHING ──┬─ list/fetch raises ─► FAILED (DocFetchError)
-           └─► READY  (document list known; FIRST doc's bytes fetched into the store)
+           └─► READY  (all discovered docs' bytes fetched into the store; latency recorded at first doc)
 (any non-terminal) ── task cancelled / TTL-swept ─► driver.close(); GET returns FAILED (SessionExpiredError)
 ```
 
 **Fetch strategy (latency-honest):** during `FETCHING` the manager calls
-`list_documents()` and eagerly fetches **only the first document's bytes** (the
-gate needs ≥1 PDF). Remaining documents are fetched **lazily** when their
-`GET …/documents/{doc_id}` is first requested (then cached in the session store).
-So `READY` means "list known + first document in hand," and the graded latency is
-about the *first* document, not an N-document aggregate. A duplicate identical MFA
+`list_documents()` and fetches **all discovered documents' bytes** into the session
+store, then sets `READY`. (The live browser is **closed at `READY`** per the
+cleanup rule, so there is no live session to lazily fetch from afterward — fetching
+all up front is the correct trade for prompt browser teardown.) The graded
+`latency_ms` is recorded at the **first** document fetched, so the metric reflects
+single-document cost, not an N-document aggregate. Typical personal-lines accounts
+have only a few documents; **incremental "render-first-then-stream-the-rest"** is a
+documented follow-up if document counts make the all-up-front fetch slow. A
+duplicate identical MFA
 code submitted while `VERIFYING_MFA` does **not** burn a retry (rejected with
 `409`); only a *distinct* attempt that the carrier rejects counts toward the 3-try
 cap. **Retention:** `READY` is terminal-for-serving but **retains** its document
@@ -220,7 +227,7 @@ bytes until the TTL (15 min) elapses — bytes are evicted at TTL, not on entry 
 | `POST /sessions` | `{carrier: "liberty_mutual", username, password}` | `201 {session_id, status:"STARTING"}` |
 | `GET /sessions/{id}` | — | `200 {session_id, status, mfa_required, documents?:[{doc_id,name}], error?:{type,message}, latency_ms?}` |
 | `POST /sessions/{id}/mfa` | `{code}` | `200 {session_id, status}`; `409` if not `AWAITING_MFA` (e.g. mid-`VERIFYING_MFA` — covers the double-submit race); typed `MfaError` (HTTP 409) if the 3-try cap is exhausted |
-| `GET /sessions/{id}/documents/{doc_id}` | optional `?download=1` | `200 application/pdf` (inline, or attachment if download). Serves cached bytes; for a not-yet-fetched doc it fetches on demand (may briefly block) and caches. `404` unknown doc; `409` if session not `READY`; typed `DocFetchError` (HTTP 502) if the on-demand fetch fails. |
+| `GET /sessions/{id}/documents/{doc_id}` | optional `?download=1` | `200 application/pdf` (inline, or attachment if download). Serves bytes cached during `FETCHING`. `404` unknown/uncached doc; `409` if session not `READY`. |
 
 `carrier` is an enum (`liberty_mutual`) so adding Geico later is additive.
 
