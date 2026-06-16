@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from backend.browser import AuthStep, BrowserDriver, DocRef
-from backend.models import CarrierError, ErrorInfo, MfaError, SessionStatus
+from backend.models import CarrierError, ErrorInfo, MfaError, SessionExpiredError, SessionStatus
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -67,6 +70,33 @@ class SessionManager:
         session.task = asyncio.create_task(self._run(session, username, password))
         return session
 
+    async def sweep(self, now: float, ttl: float) -> None:
+        """Cancel + close + evict sessions older than ttl. Best-effort cleanup."""
+        for session in self._registry.all():
+            if now - session.created_monotonic >= ttl:
+                task = session.task
+                if task is not None and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        # The child honored our cancel() -> expected, swallow.
+                        # But if WE were cancelled (e.g. app shutdown), propagate.
+                        current = asyncio.current_task()
+                        if current is not None and current.cancelling() > 0:
+                            raise
+                    except Exception:
+                        logger.exception(
+                            "sweep: unexpected error awaiting cancelled session %s", session.id
+                        )
+                self._registry.remove(session.id)
+
+    async def get_document_bytes(self, session_id: str, doc_id: str) -> tuple[str, bytes] | None:
+        session = self._registry.get(session_id)
+        if session is None:
+            return None
+        return session.documents.get(doc_id)
+
     def submit_mfa(self, session_id: str, code: str) -> None:
         session = self._registry.get(session_id)
         if session is not None:
@@ -102,6 +132,13 @@ class SessionManager:
                 if i == 0:  # latency tied to the FIRST doc
                     session.latency_ms = (self._clock() - session.mfa_start) * 1000.0
             session.status = SessionStatus.READY
+        except TimeoutError:
+            session.error = ErrorInfo.from_exception(SessionExpiredError("MFA deadline elapsed"))
+            session.status = SessionStatus.FAILED
+        except asyncio.CancelledError:
+            session.error = ErrorInfo.from_exception(SessionExpiredError("session cancelled"))
+            session.status = SessionStatus.FAILED
+            raise
         except CarrierError as exc:
             session.error = ErrorInfo.from_exception(exc)
             session.status = SessionStatus.FAILED
