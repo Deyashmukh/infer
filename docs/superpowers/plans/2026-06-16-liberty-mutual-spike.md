@@ -390,7 +390,9 @@ class ChallengeKind(StrEnum):
             "kind": self.value,
             "url": signals.url,
             "status": signals.status,
-            "abck_state": signals.cookies.get("_abck", "<absent>"),
+            "abck_state": (
+                f"_abck={signals.cookies['_abck']}" if "_abck" in signals.cookies else "<absent>"
+            ),  # key name embedded so the field is self-describing AND the test substring-checks it
             "has_captcha": signals.has_captcha,
         }
 
@@ -659,7 +661,7 @@ from spike.timing import Timer
 
 
 def test_timer_records_duration_with_fake_clock():
-    ticks = iter([100.0, 100.0, 103.5])  # start, (unused), stop
+    ticks = iter([100.0, 103.5])  # start reads 100.0, stop reads 103.5 -> 3.5
     timer = Timer(clock=lambda: next(ticks))
     timer.start("mfa_to_pdf")
     assert timer.stop("mfa_to_pdf") == 3.5
