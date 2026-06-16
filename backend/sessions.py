@@ -24,7 +24,7 @@ class Session:
     latency_ms: float | None = None
     task: asyncio.Task[None] | None = None
     created_monotonic: float = 0.0
-    mfa_start: float = 0.0  # set on the /mfa request path (later task); used for latency
+    mfa_start: float = 0.0  # set on the /mfa request path; start of latency window
 
 
 class SessionRegistry:
@@ -113,7 +113,7 @@ class SessionManager:
                 session.status = SessionStatus.AWAITING_MFA
                 code = await asyncio.wait_for(session.mfa_codes.get(), timeout=self._mfa_deadline)
                 session.status = SessionStatus.VERIFYING_MFA
-                if session.mfa_start == 0.0:  # later task moves this to the /mfa request path
+                if session.mfa_start == 0.0:  # fallback if API path hasn't set it yet
                     session.mfa_start = self._clock()
                 session.mfa_attempts += 1
                 try:

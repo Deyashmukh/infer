@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,7 +62,7 @@ def build_production_app() -> FastAPI:
             yield
         finally:
             sweeper.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with suppress(asyncio.CancelledError):
                 await sweeper
 
     return build_app(manager, registry, lifespan=lifespan)
