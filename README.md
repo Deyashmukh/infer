@@ -28,6 +28,9 @@ docker run --rm -p 8000:8000 --env-file .env --shm-size=1g \
 ```
 
 `--shm-size=1g` and `CHROMIUM_ARGS=--no-sandbox` are required for Chromium inside a container.
+The image also **bundles the built React frontend**, so the whole app — UI **and** API — is
+served at `http://localhost:8000`; the separate frontend step below is only for local
+(non-Docker) dev.
 
 **Or local** (Python ≥ 3.12, [`uv`](https://docs.astral.sh/uv/)):
 
