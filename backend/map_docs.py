@@ -59,6 +59,7 @@ async def main() -> None:
             final_url = page.url
             authed = "login.libertymutual.com" not in final_url and "/account/auth" not in final_url
             html = await page.content()
+            (OUT / "documents_real.html").write_text(html)  # raw fixture for the doc-list parser
             state = classify_lm_page(html, final_url)
             pdf_anchors = discover_document_urls(html, base_url=final_url)
 
