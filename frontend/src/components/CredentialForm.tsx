@@ -41,7 +41,7 @@ export function CredentialForm({ onSubmit }: CredentialFormProps) {
           required
         />
       </label>
-      <button type="submit" disabled={loading}>
+      <button type="submit" className="btn-primary" disabled={loading}>
         {loading ? 'Signing in…' : 'Sign in'}
       </button>
     </form>

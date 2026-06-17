@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Carrier } from '../api'
 
 interface CarrierSelectProps {
@@ -5,20 +6,42 @@ interface CarrierSelectProps {
 }
 
 export function CarrierSelect({ onSelect }: CarrierSelectProps) {
+  const [carrier, setCarrier] = useState<Carrier | ''>('')
+
+  function handleContinue() {
+    if (carrier) onSelect(carrier)
+  }
+
   return (
-    <div className="carrier-select">
+    <div className="step">
+      <p className="step-label">Step 1 of 2</p>
       <h2>Select your carrier</h2>
-      <div className="carrier-list">
-        <button
-          className="carrier-btn active"
-          onClick={() => onSelect('liberty_mutual')}
-        >
-          Liberty Mutual
-        </button>
-        <button className="carrier-btn disabled" disabled title="Coming soon">
-          Geico — coming soon
-        </button>
+      <p className="step-hint">
+        Choose the insurer you want to pull your policy documents from.
+      </p>
+
+      <div className="field">
+        <label htmlFor="carrier">Carrier</label>
+        <div className="select-wrap">
+          <select
+            id="carrier"
+            value={carrier}
+            onChange={(e) => setCarrier(e.target.value as Carrier)}
+          >
+            <option value="" disabled>
+              Select a carrier…
+            </option>
+            <option value="liberty_mutual">Liberty Mutual</option>
+            <option value="geico" disabled>
+              Geico — coming soon
+            </option>
+          </select>
+        </div>
       </div>
+
+      <button className="btn-primary" disabled={!carrier} onClick={handleContinue}>
+        Continue
+      </button>
     </div>
   )
 }

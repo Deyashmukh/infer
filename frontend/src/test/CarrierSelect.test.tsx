@@ -4,23 +4,26 @@ import userEvent from '@testing-library/user-event'
 import { CarrierSelect } from '../components/CarrierSelect'
 
 describe('CarrierSelect', () => {
-  it('renders Liberty Mutual as clickable', () => {
-    const onSelect = vi.fn()
-    render(<CarrierSelect onSelect={onSelect} />)
-    const btn = screen.getByRole('button', { name: /liberty mutual/i })
-    expect(btn).toBeEnabled()
-  })
-
-  it('renders Geico as disabled', () => {
+  it('offers Liberty Mutual as a selectable option', () => {
     render(<CarrierSelect onSelect={vi.fn()} />)
-    const btn = screen.getByRole('button', { name: /geico/i })
-    expect(btn).toBeDisabled()
+    expect(screen.getByRole('option', { name: /liberty mutual/i })).toBeEnabled()
   })
 
-  it('calls onSelect with liberty_mutual when clicked', async () => {
+  it('shows Geico as a disabled option', () => {
+    render(<CarrierSelect onSelect={vi.fn()} />)
+    expect(screen.getByRole('option', { name: /geico/i })).toBeDisabled()
+  })
+
+  it('disables Continue until a carrier is chosen', () => {
+    render(<CarrierSelect onSelect={vi.fn()} />)
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled()
+  })
+
+  it('calls onSelect with the chosen carrier when Continue is clicked', async () => {
     const onSelect = vi.fn()
     render(<CarrierSelect onSelect={onSelect} />)
-    await userEvent.click(screen.getByRole('button', { name: /liberty mutual/i }))
+    await userEvent.selectOptions(screen.getByRole('combobox'), 'liberty_mutual')
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }))
     expect(onSelect).toHaveBeenCalledWith('liberty_mutual')
   })
 })

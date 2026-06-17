@@ -35,7 +35,7 @@ export function MfaPrompt({ status, onSubmit }: MfaPromptProps) {
           required
         />
       </label>
-      <button type="submit" disabled={loading}>
+      <button type="submit" className="btn-primary" disabled={loading}>
         {loading ? 'Verifying…' : 'Submit code'}
       </button>
     </form>

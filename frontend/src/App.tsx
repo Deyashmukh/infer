@@ -10,6 +10,11 @@ import './App.css'
 
 type AppStep = 'select-carrier' | 'credentials' | 'polling'
 
+const CARRIER_LABELS: Record<Carrier, string> = {
+  liberty_mutual: 'Liberty Mutual',
+  geico: 'Geico',
+}
+
 export function App() {
   const [step, setStep] = useState<AppStep>('select-carrier')
   const [carrier, setCarrier] = useState<Carrier | null>(null)
@@ -62,14 +67,29 @@ export function App() {
   return (
     <div className="app-shell">
       <div className="card">
-        <h1 className="app-title">infer</h1>
+        <header className="app-header">
+          <h1 className="app-title">
+            infer<span className="dot">.</span>
+          </h1>
+          <p className="app-subtitle">
+            Pull your insurance policy documents in seconds.
+          </p>
+        </header>
 
         {step === 'select-carrier' && (
           <CarrierSelect onSelect={handleCarrierSelect} />
         )}
 
         {step === 'credentials' && (
-          <CredentialForm onSubmit={handleCredentials} />
+          <div className="step">
+            <p className="step-label">Step 2 of 2</p>
+            <h2>Sign in{carrier ? ` to ${CARRIER_LABELS[carrier]}` : ''}</h2>
+            <p className="step-hint">
+              Enter your portal credentials. They’re used only to fetch your
+              documents and are never stored.
+            </p>
+            <CredentialForm onSubmit={handleCredentials} />
+          </div>
         )}
 
         {step === 'polling' && (

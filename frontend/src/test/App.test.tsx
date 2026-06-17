@@ -29,7 +29,8 @@ describe('App carrier threading', () => {
 
   it('passes the carrier chosen in CarrierSelect to createSession', async () => {
     render(<App />)
-    await userEvent.click(screen.getByRole('button', { name: /liberty mutual/i }))
+    await userEvent.selectOptions(screen.getByRole('combobox'), 'liberty_mutual')
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }))
     await userEvent.type(screen.getByLabelText('Username'), 'user1')
     await userEvent.type(screen.getByLabelText('Password'), 'pass1')
     await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
