@@ -104,15 +104,28 @@ async def main() -> None:
             print(f"[egress] outbound IP this run = {egress}  (datacenter EC2 IP vs your home IP)")
 
             await page.goto(cfg.lm_login_url, wait_until="domcontentloaded")
-            await page.wait_for_timeout(1500)
-            await page.get_by_role("link", name="Log in").first.click()
-            try:
-                await page.wait_for_selector("input[name=username]", timeout=30000)
-            except Exception:
+            await page.wait_for_timeout(2000)
+            # Robustly reach the Auth0 login form. The "Log in" click can silently
+            # no-op if the landing page hasn't finished hydrating (slower in the EC2
+            # container), so retry the click until the username field appears.
+            for _ in range(5):
+                with contextlib.suppress(Exception):
+                    await page.get_by_role("link", name="Log in").first.click()
+                with contextlib.suppress(Exception):
+                    await page.wait_for_selector("input[name=username]", timeout=6000)
+                if await page.locator("input[name=username]").count() > 0:
+                    break
+                await page.wait_for_timeout(1500)
+            if await page.locator("input[name=username]").count() == 0:
+                login_els = await page.evaluate(
+                    "() => [...document.querySelectorAll('a,button')]"
+                    ".filter(e => /log\\s*in/i.test(e.innerText || ''))"
+                    ".map(e => ({tag: e.tagName, href: e.getAttribute('href') || '',"
+                    " text: (e.innerText || '').trim().slice(0, 30), vis: !!e.offsetParent}))"
+                )
                 await page.screenshot(path=str(OUT / "h1_noform.png"))
-                body = (await page.inner_text("body"))[:300].replace("\n", " ")
                 print(f"\n>>> login form never loaded.  url={page.url}")
-                print(f"    body[:300]={body!r}")
+                print(f"    login-ish elements: {login_els}")
                 print("    (screenshot -> spike/out/h1_noform.png)")
                 return
             await page.fill("input[name=username]", user)
