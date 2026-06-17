@@ -64,7 +64,12 @@ async def main() -> None:
     login_resp: dict[str, Any] = {}
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True, args=["--disable-http2"])
+        launch_args = ["--disable-http2"]
+        # PROXY_SERVER (e.g. socks5://127.0.0.1:1080) routes egress via the SSH-tunnel test.
+        proxy_server = os.environ.get("PROXY_SERVER")
+        if proxy_server:
+            launch_args.append(f"--proxy-server={proxy_server}")
+        browser = await pw.chromium.launch(headless=True, args=launch_args)
         try:
             ctx = await browser.new_context()
             page = await ctx.new_page()
