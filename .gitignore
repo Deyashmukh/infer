@@ -24,3 +24,6 @@ __pycache__/
 
 # Spike output — may contain PII (PDFs, screenshots); never commit (see spec §9)
 spike/out/
+
+# /export conversation dumps (may contain PII; never commit)
+cc_*.txt

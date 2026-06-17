@@ -1,5 +1,19 @@
 # LM Bot-Detection / Stealth Workstream — Plan (outsourced)
 
+> **RESOLVED (2026-06-17) — this workstream was not needed.**
+> The real root cause was the **datacenter egress IP**, not a browser/automation fingerprint.
+> Proven with *real* credentials: an EC2 datacenter VM completes the full LM login
+> (credentials → MFA → documents) the moment the browser egresses through a **residential IP**
+> (validated via an `ssh -R 1080` reverse SOCKS tunnel). The fix is already wired in the
+> backend (`PROXY_*` → Playwright `new_context(proxy=…)`); no stealth browser is involved.
+>
+> The diagnosis below is **superseded and wrong in two ways:** (1) the "ruled out IP /
+> residential still tarpitted" and "raw `http.client` POST gets 400" results came from
+> **dummy credentials**, and invalid/unknown accounts get tarpitted on *every* egress (a
+> standard anti-enumeration stall) — so they measured the wrong thing; (2) `net_probe`'s fast
+> 400 was a red herring (`{}` has no username → fast validation error). The stealth path
+> (patchright / Browserbase advancedStealth / …) was a dead end. Kept below for history.
+
 **Goal:** make a **hosted** (datacenter) browser complete the Liberty Mutual credential
 POST, so the system runs off-laptop. This is the **one** eval criterion not met by the
 local build; everything else (the flow, MFA, docs, render, architecture) is met locally.
