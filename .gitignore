@@ -10,6 +10,10 @@
 # Logs
 *.log
 
+# Python
+__pycache__/
+*.pyc
+
 # Editor / IDE
 .idea/
 .vscode/
@@ -17,3 +21,6 @@
 
 # Worktrees created in-repo (isolated work; see CLAUDE.md execution rule 1)
 .worktrees/
+
+# Spike output — may contain PII (PDFs, screenshots); never commit (see spec §9)
+spike/out/
