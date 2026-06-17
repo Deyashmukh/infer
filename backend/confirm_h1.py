@@ -93,6 +93,16 @@ async def main() -> None:
             page.on("response", on_resp)
             page.on("request", on_request)
 
+            egress = "?"
+            with contextlib.suppress(Exception):
+                await page.goto(
+                    "https://api.ipify.org?format=text",
+                    wait_until="domcontentloaded",
+                    timeout=20000,
+                )
+                egress = (await page.inner_text("body")).strip()[:40]
+            print(f"[egress] outbound IP this run = {egress}  (datacenter EC2 IP vs your home IP)")
+
             await page.goto(cfg.lm_login_url, wait_until="domcontentloaded")
             await page.wait_for_timeout(1500)
             await page.get_by_role("link", name="Log in").first.click()
