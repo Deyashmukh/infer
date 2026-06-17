@@ -25,11 +25,10 @@ def build_router(manager: SessionManager, registry: SessionRegistry) -> APIRoute
         session = registry.get(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="unknown session")
-        docs = (
-            [DocumentMeta(doc_id=r.doc_id, name=r.name) for r in session.doc_refs]
-            if session.status is SessionStatus.READY
-            else None
-        )
+        docs = [
+            DocumentMeta(doc_id=doc_id, name=name)
+            for doc_id, (name, _content) in session.documents.items()
+        ] or None
         return SessionStatusResponse(
             session_id=session.id,
             status=session.status,

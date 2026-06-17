@@ -7,7 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from backend.browser import AuthStep, BrowserDriver, DocRef
-from backend.models import CarrierError, ErrorInfo, MfaError, SessionExpiredError, SessionStatus
+from backend.models import (
+    CarrierError,
+    DocFetchError,
+    ErrorInfo,
+    MfaError,
+    SessionExpiredError,
+    SessionStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,14 +131,16 @@ class SessionManager:
                     step = AuthStep.NEEDS_MFA
             session.status = SessionStatus.FETCHING
             refs = await driver.list_documents()
+            if not refs:
+                raise DocFetchError("no documents found")
             session.doc_refs = refs
-            # fetch ALL discovered docs; browser closes at READY
             for i, ref in enumerate(refs):
                 fetched = await driver.fetch_document(ref)
                 session.documents[ref.doc_id] = (fetched.name, fetched.content)
-                if i == 0:  # latency tied to the FIRST doc
+                if i == 0:
                     session.latency_ms = (self._clock() - session.mfa_start) * 1000.0
-            session.status = SessionStatus.READY
+                    session.status = SessionStatus.READY  # servable after the first doc
+            # browser closes in `finally` after the last doc is fetched
         except TimeoutError:
             session.error = ErrorInfo.from_exception(SessionExpiredError("MFA deadline elapsed"))
             session.status = SessionStatus.FAILED

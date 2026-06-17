@@ -55,6 +55,8 @@ class FakeDriver:
         hang_on_mfa: bool = False,
         cancel_on_mfa: bool = False,
         connection_lost_on_fetch: bool = False,
+        docs: list[tuple[str, str]] | None = None,
+        fetch_delay: float = 0.0,
     ) -> None:
         self._bot_block = bot_block
         self._auth_fail = auth_fail
@@ -63,6 +65,8 @@ class FakeDriver:
         self._hang_on_mfa = hang_on_mfa
         self._cancel_on_mfa = cancel_on_mfa
         self._connection_lost_on_fetch = connection_lost_on_fetch
+        self._docs = docs
+        self._fetch_delay = fetch_delay
         self.closed = False
 
     async def open_login(self, login_url: str) -> None:
@@ -90,11 +94,14 @@ class FakeDriver:
     async def list_documents(self) -> list[DocRef]:
         if self._doc_fail:
             raise DocFetchError("no documents found")
-        return [DocRef(doc_id="doc-0", name="Declarations")]
+        pairs = self._docs if self._docs is not None else [("doc-0", "Declarations")]
+        return [DocRef(doc_id=d, name=n) for d, n in pairs]
 
     async def fetch_document(self, ref: DocRef) -> FetchedDoc:
         if self._connection_lost_on_fetch:
             raise DocFetchError("connection lost")
+        if self._fetch_delay:
+            await asyncio.sleep(self._fetch_delay)
         return FetchedDoc(name=ref.name, content=_SAMPLE_PDF)
 
     async def close(self) -> None:
