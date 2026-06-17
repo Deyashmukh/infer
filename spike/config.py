@@ -25,7 +25,9 @@ def load_config(env: Mapping[str, str]) -> Config:
         lm_login_url=env["LM_LOGIN_URL"],
         geico_login_url=env.get("GEICO_LOGIN_URL") or None,
         headless=env.get("HEADLESS", "true").lower() != "false",
-        chromium_args=env.get("CHROMIUM_ARGS", "--disable-http2").split(),
+        # Global infra args only (default none). Carrier-specific network args such as
+        # --disable-http2 live on each CarrierModule.LAUNCH_ARGS, not here.
+        chromium_args=env.get("CHROMIUM_ARGS", "").split(),
         proxy_server=env.get("PROXY_SERVER") or None,
         proxy_username=env.get("PROXY_USERNAME") or None,
         proxy_password=env.get("PROXY_PASSWORD") or None,

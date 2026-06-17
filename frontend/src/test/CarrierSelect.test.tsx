@@ -9,9 +9,9 @@ describe('CarrierSelect', () => {
     expect(screen.getByRole('option', { name: /liberty mutual/i })).toBeEnabled()
   })
 
-  it('shows Geico as a disabled option', () => {
+  it('offers Geico as a selectable option', () => {
     render(<CarrierSelect onSelect={vi.fn()} />)
-    expect(screen.getByRole('option', { name: /geico/i })).toBeDisabled()
+    expect(screen.getByRole('option', { name: /geico/i })).toBeEnabled()
   })
 
   it('disables Continue until a carrier is chosen', () => {

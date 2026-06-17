@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, HTTPException, Response
 
 from backend.models import (
@@ -10,6 +12,18 @@ from backend.models import (
     SessionStatusResponse,
 )
 from backend.sessions import SessionManager, SessionRegistry
+
+
+def _content_disposition(disposition: str, name: str) -> str:
+    """Build a Content-Disposition value safe for non-ASCII document names.
+
+    HTTP header values are latin-1; document names can contain characters that aren't (e.g. the
+    em dash in "Geico ID Card — 2009 ..."). Per RFC 6266/5987 we emit a latin-1-safe ``filename``
+    fallback plus a UTF-8 ``filename*`` that modern browsers prefer.
+    """
+    filename = f"{name}.pdf"
+    fallback = filename.encode("latin-1", "replace").decode("latin-1").replace('"', "'")
+    return f"{disposition}; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
 def build_router(manager: SessionManager, registry: SessionRegistry) -> APIRouter:
@@ -73,7 +87,7 @@ def build_router(manager: SessionManager, registry: SessionRegistry) -> APIRoute
         return Response(
             content=content,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'{disposition}; filename="{name}.pdf"'},
+            headers={"Content-Disposition": _content_disposition(disposition, name)},
         )
 
     return router

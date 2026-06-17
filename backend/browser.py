@@ -44,6 +44,10 @@ class BrowserDriver(Protocol):
 class CarrierModule(Protocol):
     """Structural interface that every carrier module must satisfy."""
 
+    # Carrier-specific Chromium launch args (e.g. ["--disable-http2"]). Appended to the global
+    # cfg.chromium_args so each carrier controls its own network fingerprint requirements.
+    LAUNCH_ARGS: list[str]
+
     async def open_login(self, page: object, login_url: str) -> None: ...
     async def submit_credentials(self, page: object, username: str, password: str) -> AuthStep: ...
     async def submit_mfa(self, page: object, code: str) -> AuthStep: ...

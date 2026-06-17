@@ -32,9 +32,7 @@ export function CarrierSelect({ onSelect }: CarrierSelectProps) {
               Select a carrier…
             </option>
             <option value="liberty_mutual">Liberty Mutual</option>
-            <option value="geico" disabled>
-              Geico — coming soon
-            </option>
+            <option value="geico">Geico</option>
           </select>
         </div>
       </div>

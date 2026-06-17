@@ -8,7 +8,9 @@ def test_load_config_defaults():
     assert cfg.lm_login_url.endswith("/log-in")
     assert cfg.geico_login_url is None
     assert cfg.headless is True
-    assert cfg.chromium_args == ["--disable-http2"]
+    # Default has no global Chromium args; carrier network args (e.g. --disable-http2) live on
+    # each CarrierModule.LAUNCH_ARGS, not in the global config.
+    assert cfg.chromium_args == []
     assert cfg.proxy_server is None
 
 

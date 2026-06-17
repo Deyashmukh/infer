@@ -50,6 +50,27 @@ async def test_full_flow_over_http():
         assert doc.content.startswith(b"%PDF-")
 
 
+async def test_document_with_non_ascii_name_serves_ok():
+    # Geico ID-card names contain an em dash; the Content-Disposition header must not crash on it.
+    name = "Geico ID Card — 2009 LEXS RX 350 AWD"
+    c, _ = client_for(FakeDriver(docs=[("doc-0", name)]))
+    async with c:
+        r = await c.post("/sessions", json=_NEW_SESSION)
+        sid = r.json()["session_id"]
+        await _poll(c, sid, "AWAITING_MFA")
+        await c.post(f"/sessions/{sid}/mfa", json={"code": "123456"})
+        await _poll(c, sid, "READY")
+        doc = await c.get(f"/sessions/{sid}/documents/doc-0")
+        assert doc.status_code == 200
+        assert doc.content.startswith(b"%PDF-")
+        cd = doc.headers["content-disposition"]
+        # latin-1-safe fallback + RFC 5987 UTF-8 form carrying the percent-encoded em dash.
+        assert cd.startswith("inline; filename=")
+        assert "filename*=UTF-8''" in cd
+        assert "%E2%80%94" in cd  # the em dash, percent-encoded
+        cd.encode("latin-1")  # must be header-encodable (the original crash)
+
+
 async def test_mfa_rejected_when_not_awaiting():
     c, _ = client_for(FakeDriver())
     async with c:

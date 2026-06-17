@@ -29,8 +29,15 @@ class ChromiumDriver:
     async def _ensure(self, storage_state: StorageState | None = None) -> Page:
         if self._page is None:
             self._pw = await async_playwright().start()
+            # Global infra args (e.g. --no-sandbox in Docker) + this carrier's network args
+            # (e.g. LM needs --disable-http2 for its Cloudflare edge; Geico runs HTTP/2).
+            args = list(self._cfg.chromium_args) + list(self._carrier.LAUNCH_ARGS)
+            # Anti-detection: disable the AutomationControlled blink feature so the browser
+            # doesn't advertise itself as automated to carrier bot-detection.
+            if "--disable-blink-features=AutomationControlled" not in args:
+                args.append("--disable-blink-features=AutomationControlled")
             self._browser = await self._pw.chromium.launch(
-                headless=self._cfg.headless, args=self._cfg.chromium_args
+                headless=self._cfg.headless, args=args
             )
             proxy: ProxySettings | None = None
             if self._cfg.proxy_server:
@@ -39,10 +46,22 @@ class ChromiumDriver:
                     username=self._cfg.proxy_username or "",
                     password=self._cfg.proxy_password or "",
                 )
+            # Present a normal Chrome UA (strip the "HeadlessChrome" tell), derived from the
+            # actual build so it stays version-correct on any host.
+            probe = await self._browser.new_context()
+            real_ua = (
+                await (await probe.new_page()).evaluate("navigator.userAgent")
+            ).replace("HeadlessChrome", "Chrome")
+            await probe.close()
             self._ctx = await self._browser.new_context(
                 accept_downloads=True,
                 proxy=proxy,
                 storage_state=storage_state,
+                user_agent=real_ua,
+            )
+            # Mask navigator.webdriver (the canonical automation tell) on every page.
+            await self._ctx.add_init_script(
+                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
             )
             self._page = await self._ctx.new_page()
         return self._page

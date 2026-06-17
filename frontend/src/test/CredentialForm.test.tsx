@@ -19,4 +19,14 @@ describe('CredentialForm', () => {
     await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
     expect(onSubmit).toHaveBeenCalledWith('alice', 'secret')
   })
+
+  it('shows an error and re-enables the button when onSubmit rejects', async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error('createSession failed: 500'))
+    render(<CredentialForm onSubmit={onSubmit} />)
+    await userEvent.type(screen.getByRole('textbox', { name: /username/i }), 'alice')
+    await userEvent.type(screen.getByLabelText(/password/i), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not reach the server/i)
+    expect(screen.getByRole('button', { name: /sign in/i })).toBeEnabled()
+  })
 })

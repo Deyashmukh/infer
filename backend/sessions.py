@@ -194,14 +194,16 @@ class SessionManager:
             refs = await driver.list_documents()
             if not refs:
                 raise DocFetchError("no documents found")
-            session.doc_refs = refs
-            for i, ref in enumerate(refs):
-                fetched = await driver.fetch_document(ref)
-                session.documents[ref.doc_id] = (fetched.name, fetched.content)
-                if i == 0:
-                    session.latency_ms = (self._clock() - session.mfa_start) * 1000.0
-                    session.status = SessionStatus.READY  # servable after the first doc
-            # browser closes in `finally` after the last doc is fetched
+            # One document per carrier (user requirement): fetching extras adds wall-clock time
+            # and risks a flaky doc failing the whole session, without improving the measured
+            # MFA->first-doc latency. So serve only the first.
+            ref = refs[0]
+            session.doc_refs = [ref]
+            fetched = await driver.fetch_document(ref)
+            session.documents[ref.doc_id] = (fetched.name, fetched.content)
+            session.latency_ms = (self._clock() - session.mfa_start) * 1000.0
+            session.status = SessionStatus.READY
+            # browser closes in `finally` after the single doc is fetched
         except TimeoutError:
             session.error = ErrorInfo.from_exception(SessionExpiredError("MFA deadline elapsed"))
             session.status = SessionStatus.FAILED

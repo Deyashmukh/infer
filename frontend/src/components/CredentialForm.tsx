@@ -8,12 +8,17 @@ export function CredentialForm({ onSubmit }: CredentialFormProps) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setLoading(true)
+    setError(null)
     try {
       await onSubmit(username, password)
+    } catch {
+      // Surface failures (network/CORS/backend) instead of leaving the button looking dead.
+      setError('Could not reach the server. Please check your connection and try again.')
     } finally {
       setLoading(false)
     }
@@ -44,6 +49,11 @@ export function CredentialForm({ onSubmit }: CredentialFormProps) {
       <button type="submit" className="btn-primary" disabled={loading}>
         {loading ? 'Signing in…' : 'Sign in'}
       </button>
+      {error && (
+        <p className="error-msg" role="alert">
+          {error}
+        </p>
+      )}
     </form>
   )
 }

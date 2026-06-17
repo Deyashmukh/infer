@@ -1,15 +1,16 @@
 """Liberty Mutual carrier-specific browser step functions.
 
-Each function operates on a Playwright Page (or BrowserContext) and encodes
-the selectors, timings, and robustness logic proven by the spike scripts
-(backend/confirm_h1.py, backend/probe_doc.py). ChromiumDriver delegates all
-LM-specific work here; adding a second carrier (e.g. Geico) means a parallel
-module with the same function signatures.
+Each function operates on a Playwright Page (or BrowserContext) and encodes the selectors,
+timings, and robustness logic for LM's Auth0 login + document portal. ChromiumDriver delegates
+all LM-specific work here; adding a carrier (e.g. Geico) means a parallel module with the same
+function signatures (see carriers/geico.py).
 """
 
 from __future__ import annotations
 
 import contextlib
+import logging
+import time as _time
 from typing import Any
 
 from playwright.async_api import BrowserContext, Page
@@ -18,9 +19,16 @@ from backend.browser import AuthStep, DocRef, FetchedDoc
 from backend.models import BotChallengeError, CarrierAuthError, DocFetchError, MfaError
 from spike.docfetch import is_valid_pdf
 
+logger = logging.getLogger(__name__)
+
 DOCS_URL = "https://eservice.libertymutual.com/accountmanager/documents"
 
-# Auth0 OTP-field selectors, in preference order (from confirm_h1._locate_otp).
+# LM's Cloudflare login edge rejects HTTP/2 (the credential POST fires but the edge returns a
+# "something went wrong" page — confirmed live 2026-06-17). Force HTTP/1.1. The flag is
+# browser-global, so this also pins the document fetch to HTTP/1.1.
+LAUNCH_ARGS = ["--disable-http2"]
+
+# Auth0 OTP-field selectors, in preference order.
 _OTP_SELECTORS = (
     "input[autocomplete=one-time-code]",
     "input[name*=code i]",
@@ -36,7 +44,7 @@ async def _locate_otp(page: Page) -> Any:
         loc = page.locator(sel)
         if await loc.count() > 0 and await loc.first.is_visible():
             return loc.first
-    # Fallback: any visible non-credential input (mirrors confirm_h1._locate_otp).
+    # Fallback: any visible non-credential input.
     inputs = page.locator("input")
     for i in range(await inputs.count()):
         el = inputs.nth(i)
@@ -53,8 +61,8 @@ async def open_login(page: Page, login_url: str) -> None:
     """Navigate to the LM landing page and reach the Auth0 credential form.
 
     Robustly clicks "Log in" with retry until ``input[name=username]`` appears
-    (the hydration-race guard from confirm_h1). Raises BotChallengeError if the
-    page shows a hard block instead of the form.
+    (a hydration-race guard). Raises BotChallengeError if the page shows a hard
+    block instead of the form.
     """
     await page.goto(login_url, wait_until="domcontentloaded")
     await page.wait_for_timeout(2000)
@@ -84,11 +92,11 @@ async def open_login(page: Page, login_url: str) -> None:
 
 
 async def submit_credentials(page: Page, username: str, password: str) -> AuthStep:
-    """Fill and submit the Auth0 username+password form.
+    """Fill and submit the Auth0 username+password form, reliably.
 
-    Exactly one submission: if the credential POST doesn't fire within 6 s,
-    re-clicks once (the submit-handler race observed on slower hosts). Polls up
-    to 30 s for the MFA state; raises CarrierAuthError on "something went wrong".
+    Re-fills + re-clicks until the credential POST (usernamepassword/login) is
+    actually observed, guarding against a dropped submit click. Then polls up to
+    60 s for the MFA state; raises CarrierAuthError on "something went wrong".
     """
     login_sent: dict[str, bool] = {"sent": False}
 
@@ -98,25 +106,32 @@ async def submit_credentials(page: Page, username: str, password: str) -> AuthSt
 
     page.on("request", _on_request)
 
-    await page.fill("input[name=username]", username)
-    await page.fill("input[name=password]", password)
-    await page.wait_for_timeout(400)  # let the form's JS attach its submit handler
-    await page.click("button[type=submit]")
+    # Fill + click button[type=submit] fires the usernamepassword/login POST (confirmed by
+    # live recon). The earlier flakiness was a broken re-click guard that treated "still on
+    # login.libertymutual.com" — where the form itself lives — as success, so it never
+    # retried a dropped click. Here we re-fill + re-click until the POST is actually
+    # observed. login_sent flips true only once the POST fires, so at most ONE real
+    # credential attempt is made regardless of how many clicks were dropped -> no lockout.
+    try:
+        for _ in range(5):
+            with contextlib.suppress(Exception):
+                await page.fill("input[name=username]", username)
+                await page.fill("input[name=password]", password)
+                await page.wait_for_timeout(400)
+                await page.click("button[type=submit]")
+            for _ in range(5):
+                await page.wait_for_timeout(1000)
+                if login_sent["sent"]:
+                    break
+            if login_sent["sent"]:
+                break
+    finally:
+        page.remove_listener("request", _on_request)
 
-    # Confirm the credential POST actually fired; re-click once if not (mirrors
-    # the guard in confirm_h1 for the silent-no-op case on slow hosts).
-    for _ in range(6):
-        await page.wait_for_timeout(1000)
-        if login_sent["sent"] or "login.libertymutual.com" in page.url:
-            break
-    else:
-        with contextlib.suppress(Exception):
-            await page.click("button[type=submit]")
+    logger.info("[lm] credential POST fired=%s url=%s", login_sent["sent"], page.url[:70])
 
-    page.remove_listener("request", _on_request)
-
-    # Poll up to 30 s for MFA state or an error (HTTP/1.1 is slower than h2).
-    for _ in range(30):
+    # Poll up to 60 s for MFA state or an error (HTTP/1.1 is slower than h2).
+    for _ in range(60):
         await page.wait_for_timeout(1000)
         if await _locate_otp(page) is not None or "/mfa" in page.url:
             return AuthStep.NEEDS_MFA
@@ -124,7 +139,21 @@ async def submit_credentials(page: Page, username: str, password: str) -> AuthSt
         if "something went wrong" in body:
             raise CarrierAuthError("credentials rejected by Liberty Mutual")
 
-    raise CarrierAuthError("timed out waiting for MFA prompt after credential submission")
+    # Diagnostic: capture what LM is actually showing so we can see why MFA wasn't reached.
+    with contextlib.suppress(Exception):
+        await page.screenshot(path="spike/out/lm_mfa_timeout.png", full_page=True)
+    body_txt = ""
+    with contextlib.suppress(Exception):
+        body_txt = (await page.inner_text("body"))[:300]
+    logger.warning(
+        "[lm] MFA-wait TIMEOUT post_fired=%s url=%s body=%r",
+        login_sent["sent"],
+        page.url[:70],
+        body_txt,
+    )
+    raise CarrierAuthError(
+        f"timed out waiting for MFA prompt after credential submission (url={page.url})"
+    )
 
 
 async def submit_mfa(page: Page, code: str) -> AuthStep:
@@ -134,6 +163,7 @@ async def submit_mfa(page: Page, code: str) -> AuthStep:
     only enables the Continue button on real per-keystroke events. Submits via
     Enter to avoid a disabled-button race.
     """
+    t0 = _time.monotonic()
     otp = await _locate_otp(page)
     if otp is None:
         raise MfaError("OTP input field not found on page")
@@ -143,17 +173,20 @@ async def submit_mfa(page: Page, code: str) -> AuthStep:
     await page.wait_for_timeout(400)
     await otp.press("Enter")
 
-    # Poll up to 30 s for leaving the Auth0 login domain.
-    for _ in range(30):
-        await page.wait_for_timeout(1000)
+    # Poll up to 30 s for leaving the Auth0 login domain. 250 ms granularity so we detect the
+    # post-auth redirect promptly (1 s rounding was up to ~1 s of pure latency).
+    for _ in range(120):
+        await page.wait_for_timeout(250)
         if "login.libertymutual.com" not in page.url and "/mfa" not in page.url:
             # Wait out any transient OAuth-callback redirect (/account/auth?code=...).
-            for _ in range(20):
+            for _ in range(40):
                 if "/account/auth" not in page.url:
                     break
-                await page.wait_for_timeout(1000)
-            with contextlib.suppress(Exception):
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                await page.wait_for_timeout(250)
+            # Minimal settle — list_documents navigates fresh and waits on its own controls,
+            # so anything more here is pure latency.
+            await page.wait_for_timeout(300)
+            logger.info("[lm] MFA->authed in %.2fs", _time.monotonic() - t0)
             return AuthStep.AUTHENTICATED
 
         # If the Continue button becomes enabled, click it (belt-and-suspenders).
@@ -185,13 +218,14 @@ async def list_documents(page: Page) -> list[DocRef]:
     control among all visible "View / print" elements, and name is derived from
     the enclosing policy card's heading text.
     """
+    t0 = _time.monotonic()
     await page.goto(DOCS_URL, wait_until="domcontentloaded", timeout=45000)
-    with contextlib.suppress(Exception):
-        await page.wait_for_load_state("networkidle", timeout=15000)
-    await page.wait_for_timeout(1500)
 
-    # Enumerate all visible "View / print" controls (buttons or links).
+    # Wait for the "View / print" controls to render — targeted, and far faster than a
+    # networkidle wait on this heavy SPA (which can sit at the full 15s).
     loc = page.locator(":is(button,a)", has_text="View / print")
+    with contextlib.suppress(Exception):
+        await loc.first.wait_for(state="attached", timeout=20000)
     total = await loc.count()
 
     refs: list[DocRef] = []
@@ -209,6 +243,7 @@ async def list_documents(page: Page) -> list[DocRef]:
     if not refs:
         raise DocFetchError("no 'View / print' controls found on documents page")
 
+    logger.info("[lm] list-documents -> %d doc(s) in %.2fs", len(refs), _time.monotonic() - t0)
     return refs
 
 
@@ -247,13 +282,15 @@ async def fetch_document(ctx: BrowserContext, page: Page, ref: DocRef) -> Fetche
     Falls back to a context-level GET request (same cookie jar) if popup capture
     fails. Raises DocFetchError if no valid PDF is obtained.
     """
-    # Re-navigate to the documents page so the live locator is fresh.
-    await page.goto(DOCS_URL, wait_until="domcontentloaded", timeout=45000)
-    with contextlib.suppress(Exception):
-        await page.wait_for_load_state("networkidle", timeout=15000)
-    await page.wait_for_timeout(1500)
+    t0 = _time.monotonic()
+    # Reuse the page list_documents just loaded — re-navigating to the docs page here is a
+    # redundant slow round-trip. Only navigate if we've actually left the documents page.
+    if DOCS_URL not in page.url:
+        await page.goto(DOCS_URL, wait_until="domcontentloaded", timeout=45000)
 
     loc = page.locator(":is(button,a)", has_text="View / print")
+    with contextlib.suppress(Exception):
+        await loc.first.wait_for(state="attached", timeout=20000)
     idx = int(ref.doc_id)
 
     # Collect only visible controls to re-index by visible position.
@@ -275,37 +312,42 @@ async def fetch_document(ctx: BrowserContext, page: Page, ref: DocRef) -> Fetche
     pdf_url: str | None = None
     content: bytes | None = None
 
+    popup_url = ""
     try:
-        async with ctx.expect_page(timeout=10000) as popup_info:
+        async with ctx.expect_page(timeout=15000) as popup_info:
             await target_item.click(timeout=5000)
         popup = await popup_info.value
 
-        # Wait for the popup to navigate to the PDF download URL.
-        for _ in range(15):
-            await popup.wait_for_timeout(500)
-            url = popup.url
-            if "/document/download/" in url:
-                pdf_url = url
-                break
-            ct = ""
+        # Capture the application/pdf response. Generous timeout (HTTP/1.1 PDF loads are
+        # slow) and a broad predicate (content-type OR a download/.pdf URL).
+        with contextlib.suppress(Exception):
+            resp = await popup.wait_for_event(
+                "response",
+                predicate=lambda r: "application/pdf"
+                in (r.headers.get("content-type") or "").lower()
+                or "/document/download/" in r.url
+                or r.url.lower().endswith(".pdf"),
+                timeout=25000,
+            )
+            pdf_url = resp.url
             with contextlib.suppress(Exception):
-                resp = await popup.wait_for_event(
-                    "response",
-                    predicate=lambda r: "application/pdf"
-                    in (r.headers.get("content-type") or "").lower(),
-                    timeout=1000,
-                )
-                ct = (resp.headers.get("content-type") or "").lower()
-                if "application/pdf" in ct:
-                    content = await resp.body()
-                    pdf_url = resp.url
-                    break
+                content = await resp.body()
 
+        # Fallback: re-fetch the popup's settled PDF URL through the authed context.
+        if content is None:
+            with contextlib.suppress(Exception):
+                await popup.wait_for_timeout(2000)
+            if "/document/download/" in popup.url or popup.url.lower().endswith(".pdf"):
+                pdf_url = popup.url
         if content is None and pdf_url:
-            # Re-fetch via the context's request (authenticated cookies).
-            resp = await ctx.request.get(pdf_url)
-            content = await resp.body()
+            with contextlib.suppress(Exception):
+                resp = await ctx.request.get(pdf_url)
+                content = await resp.body()
 
+        popup_url = popup.url
+        if content is None:  # diagnostic: capture what the popup is actually showing
+            with contextlib.suppress(Exception):
+                await popup.screenshot(path="spike/out/lm_doc_popup.png")
         with contextlib.suppress(Exception):
             await popup.close()
 
@@ -314,7 +356,7 @@ async def fetch_document(ctx: BrowserContext, page: Page, ref: DocRef) -> Fetche
             raise DocFetchError(f"failed to capture PDF popup for {ref.name!r}: {exc}") from exc
 
     if content is None:
-        raise DocFetchError(f"no PDF content captured for {ref.name!r}")
+        raise DocFetchError(f"no PDF content captured for {ref.name!r} (popup={popup_url})")
 
     if not is_valid_pdf(content):
         raise DocFetchError(
@@ -322,4 +364,7 @@ async def fetch_document(ctx: BrowserContext, page: Page, ref: DocRef) -> Fetche
             f"(got {len(content)} bytes, header={content[:8]!r})"
         )
 
+    logger.info(
+        "[lm] fetch %r (%d bytes) in %.2fs", ref.name, len(content), _time.monotonic() - t0
+    )
     return FetchedDoc(name=ref.name, content=content)

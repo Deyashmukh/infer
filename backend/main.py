@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from collections.abc import AsyncIterator
@@ -16,9 +17,33 @@ from backend.chromium_driver import make_chromium_driver_factory
 from backend.sessions import SessionCache, SessionManager, SessionRegistry
 from spike.config import load_config
 
-FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173")
+# Allowed browser origins for CORS. Comma-separated; defaults to both common Vite dev ports
+# (5173, and 5174 which Vite falls back to when 5173 is taken). Resolved at app-build time so a
+# FRONTEND_ORIGIN set in .env (loaded by build_production_app) is honored.
+_DEFAULT_FRONTEND_ORIGINS = "http://localhost:5173,http://localhost:5174"
 SESSION_TTL_SECONDS = 900.0
 SWEEP_INTERVAL_SECONDS = 60.0
+
+
+def _frontend_origins() -> list[str]:
+    raw = os.environ.get("FRONTEND_ORIGIN", _DEFAULT_FRONTEND_ORIGINS)
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+def _configure_logging() -> None:
+    """Emit app (backend.*) INFO logs — e.g. the [geico] timing breakdown — to stdout.
+
+    uvicorn only attaches handlers to its own loggers, so without this the app's INFO logs are
+    swallowed. Isolated to the "backend" logger (propagate=False) to avoid double-printing
+    uvicorn's access lines.
+    """
+    log = logging.getLogger("backend")
+    log.setLevel(logging.INFO)
+    if not log.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:    %(name)s - %(message)s"))
+        log.addHandler(handler)
+        log.propagate = False
 
 
 def build_app(
@@ -29,7 +54,7 @@ def build_app(
     app = FastAPI(title="infer — LM policy fetcher", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[FRONTEND_ORIGIN],
+        allow_origins=_frontend_origins(),
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -51,6 +76,7 @@ def build_production_app() -> FastAPI:
     # sourcing it first. override=False — real environment vars win in prod, and a
     # missing .env (e.g. in the container, where vars are injected) is a silent no-op.
     load_dotenv(override=False)
+    _configure_logging()
     registry = SessionRegistry()
     cfg = load_config(os.environ)
     login_urls: dict[str, str] = {"liberty_mutual": cfg.lm_login_url}
@@ -61,6 +87,9 @@ def build_production_app() -> FastAPI:
         driver_factory=make_chromium_driver_factory(cfg),
         login_urls=login_urls,
         clock=time.monotonic,
+        # Generous window to receive the SMS + enter it; does NOT affect the graded latency,
+        # which is measured from MFA-submit onward.
+        mfa_deadline=300.0,
         cache=SessionCache(clock=time.monotonic),
     )
 
