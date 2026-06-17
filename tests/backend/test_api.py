@@ -11,8 +11,8 @@ def client_for(driver):
     reg = SessionRegistry()
     mgr = SessionManager(
         registry=reg,
-        driver_factory=lambda: driver,
-        login_url="https://lm/login",
+        driver_factory=lambda carrier: driver,
+        login_urls={"liberty_mutual": "https://lm/login"},
         clock=lambda: 0.0,
         mfa_deadline=5.0,
     )

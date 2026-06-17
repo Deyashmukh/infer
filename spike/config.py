@@ -10,6 +10,7 @@ class ConfigError(Exception): ...
 @dataclass(frozen=True)
 class Config:
     lm_login_url: str
+    geico_login_url: str | None
     headless: bool
     chromium_args: list[str]
     proxy_server: str | None
@@ -22,6 +23,7 @@ def load_config(env: Mapping[str, str]) -> Config:
         raise ConfigError(f"missing required env: {', '.join(missing)}")
     return Config(
         lm_login_url=env["LM_LOGIN_URL"],
+        geico_login_url=env.get("GEICO_LOGIN_URL") or None,
         headless=env.get("HEADLESS", "true").lower() != "false",
         chromium_args=env.get("CHROMIUM_ARGS", "--disable-http2").split(),
         proxy_server=env.get("PROXY_SERVER") or None,

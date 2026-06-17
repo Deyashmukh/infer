@@ -9,8 +9,8 @@ async def test_health_returns_ok() -> None:
     reg = SessionRegistry()
     mgr = SessionManager(
         registry=reg,
-        driver_factory=lambda: FakeDriver(),
-        login_url="https://lm/login",
+        driver_factory=lambda carrier: FakeDriver(),
+        login_urls={"liberty_mutual": "https://lm/login"},
         clock=lambda: 0.0,
         mfa_deadline=5.0,
     )

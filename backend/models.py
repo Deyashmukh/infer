@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
@@ -32,6 +31,11 @@ class SessionExpiredError(CarrierError):
     """MFA deadline elapsed, TTL sweep, or task cancelled."""
 
 
+class Carrier(StrEnum):
+    LIBERTY_MUTUAL = "liberty_mutual"
+    GEICO = "geico"
+
+
 class SessionStatus(StrEnum):
     STARTING = "STARTING"
     AWAITING_MFA = "AWAITING_MFA"
@@ -53,7 +57,7 @@ class ErrorInfo(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    carrier: Literal["liberty_mutual"]
+    carrier: Carrier
     username: str
     password: str
 

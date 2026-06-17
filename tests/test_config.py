@@ -6,9 +6,15 @@ from spike.config import ConfigError, load_config
 def test_load_config_defaults():
     cfg = load_config({"LM_LOGIN_URL": "https://www.libertymutual.com/log-in"})
     assert cfg.lm_login_url.endswith("/log-in")
+    assert cfg.geico_login_url is None
     assert cfg.headless is True
     assert cfg.chromium_args == ["--disable-http2"]
     assert cfg.proxy_server is None
+
+
+def test_load_config_geico_login_url():
+    cfg = load_config({"LM_LOGIN_URL": "https://x", "GEICO_LOGIN_URL": "https://geico/login"})
+    assert cfg.geico_login_url == "https://geico/login"
 
 def test_load_config_proxy_and_overrides():
     cfg = load_config({

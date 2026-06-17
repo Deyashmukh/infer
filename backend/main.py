@@ -48,10 +48,13 @@ def build_production_app() -> FastAPI:
     Exercised live (needs real env + a running browser), not in the offline suite."""
     registry = SessionRegistry()
     cfg = load_config(os.environ)
+    login_urls: dict[str, str] = {"liberty_mutual": cfg.lm_login_url}
+    if cfg.geico_login_url is not None:
+        login_urls["geico"] = cfg.geico_login_url
     manager = SessionManager(
         registry=registry,
         driver_factory=make_chromium_driver_factory(cfg),
-        login_url=cfg.lm_login_url,
+        login_urls=login_urls,
         clock=time.monotonic,
     )
 

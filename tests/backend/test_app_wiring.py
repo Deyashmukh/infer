@@ -8,7 +8,10 @@ from backend.sessions import SessionManager, SessionRegistry
 def test_build_app_returns_fastapi_with_routes():
     reg = SessionRegistry()
     mgr = SessionManager(
-        registry=reg, driver_factory=lambda: FakeDriver(), login_url="x", clock=lambda: 0.0
+        registry=reg,
+        driver_factory=lambda carrier: FakeDriver(),
+        login_urls={"liberty_mutual": "x"},
+        clock=lambda: 0.0,
     )
     app = build_app(manager=mgr, registry=reg)
     assert isinstance(app, FastAPI)

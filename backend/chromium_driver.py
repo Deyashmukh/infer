@@ -5,14 +5,15 @@ from typing import Any
 
 from playwright.async_api import Browser, BrowserContext, Page, ProxySettings, async_playwright
 
-from backend.browser import AuthStep, DocRef, FetchedDoc
-from backend.carriers import lm as lm_carrier
+from backend.browser import AuthStep, CarrierModule, DocRef, FetchedDoc
+from backend.carriers import registry
 from spike.config import Config
 
 
 class ChromiumDriver:
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, carrier: str) -> None:
         self._cfg = cfg
+        self._carrier: CarrierModule = registry.carrier_module(carrier)
         self._pw: Any = None
         self._browser: Browser | None = None
         self._ctx: BrowserContext | None = None
@@ -37,24 +38,24 @@ class ChromiumDriver:
 
     async def open_login(self, login_url: str) -> None:
         page = await self._ensure()
-        await lm_carrier.open_login(page, login_url)
+        await self._carrier.open_login(page, login_url)
 
     async def submit_credentials(self, username: str, password: str) -> AuthStep:
         page = await self._ensure()
-        return await lm_carrier.submit_credentials(page, username, password)
+        return await self._carrier.submit_credentials(page, username, password)
 
     async def submit_mfa(self, code: str) -> AuthStep:
         page = await self._ensure()
-        return await lm_carrier.submit_mfa(page, code)
+        return await self._carrier.submit_mfa(page, code)
 
     async def list_documents(self) -> list[DocRef]:
         page = await self._ensure()
-        return await lm_carrier.list_documents(page)
+        return await self._carrier.list_documents(page)
 
     async def fetch_document(self, ref: DocRef) -> FetchedDoc:
         page = await self._ensure()
         assert self._ctx is not None  # guaranteed by _ensure
-        return await lm_carrier.fetch_document(self._ctx, page, ref)
+        return await self._carrier.fetch_document(self._ctx, page, ref)
 
     async def close(self) -> None:
         if self._browser is not None:
@@ -66,7 +67,7 @@ class ChromiumDriver:
         self._page = self._ctx = None
 
 
-def make_chromium_driver_factory(cfg: Config) -> Callable[[], ChromiumDriver]:
-    def factory() -> ChromiumDriver:
-        return ChromiumDriver(cfg)
+def make_chromium_driver_factory(cfg: Config) -> Callable[[str], ChromiumDriver]:
+    def factory(carrier: str) -> ChromiumDriver:
+        return ChromiumDriver(cfg, carrier)
     return factory

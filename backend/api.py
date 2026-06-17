@@ -21,7 +21,7 @@ def build_router(manager: SessionManager, registry: SessionRegistry) -> APIRoute
 
     @router.post("/sessions", status_code=201)
     async def create_session(req: CreateSessionRequest) -> dict[str, str]:
-        session = manager.start(req.username, req.password)
+        session = manager.start(req.carrier.value, req.username, req.password)
         return {"session_id": session.id, "status": session.status.value}
 
     @router.get("/sessions/{session_id}")

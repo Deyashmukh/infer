@@ -10,8 +10,8 @@ def make_manager(driver):
     reg = SessionRegistry()
     return reg, SessionManager(
         registry=reg,
-        driver_factory=lambda: driver,
-        login_url="x",
+        driver_factory=lambda carrier: driver,
+        login_urls={"liberty_mutual": "x"},
         clock=time.monotonic,
         mfa_deadline=5.0,
     )
@@ -28,7 +28,7 @@ async def _wait(reg, sid, status, timeout=1.0):
 async def test_mfa_retry_then_success_caps_attempts():
     driver = FakeDriver(mfa_fail_times=2)  # 2 rejects, 3rd accepted
     reg, mgr = make_manager(driver)
-    s = mgr.start("u", "p")
+    s = mgr.start("liberty_mutual", "u", "p")
     await _wait(reg, s.id, SessionStatus.AWAITING_MFA)
     mgr.submit_mfa(s.id, "bad1")
     await _wait(reg, s.id, SessionStatus.AWAITING_MFA)  # back to awaiting after reject 1
@@ -42,7 +42,7 @@ async def test_mfa_retry_then_success_caps_attempts():
 async def test_mfa_exhausts_cap_then_fails():
     driver = FakeDriver(mfa_fail_times=99)
     reg, mgr = make_manager(driver)
-    s = mgr.start("u", "p")
+    s = mgr.start("liberty_mutual", "u", "p")
     await _wait(reg, s.id, SessionStatus.AWAITING_MFA)
     for code in ("a", "b", "c"):
         mgr.submit_mfa(s.id, code)
