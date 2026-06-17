@@ -1,8 +1,11 @@
 # Minimal Liberty Mutual Policy-Document Web App — Design (Revised, post-gate)
 
 - **Date:** 2026-06-16
-- **Status:** Revised after feasibility proven on a residential dev IP; **datacenter
-  login is gated as milestone 0** (§19). Supersedes the Browserbase-based draft.
+- **Status:** Revised after feasibility proven on a residential dev IP; **milestone 0
+  (datacenter login) is now SETTLED (2026-06-17):** a datacenter VM completes the full login
+  end-to-end **only through a residential egress** — a datacenter IP is tarpitted on the
+  credential POST, and a residential proxy / `ssh -R 1080` tunnel clears it. Residential egress
+  is therefore **required, not optional** (revises §13). Supersedes the Browserbase-based draft.
 - **Scope:** A minimal but real human-in-the-loop web app for **Liberty Mutual
   only**: user enters portal credentials → backend logs in on a **self-hosted
   headless Chromium** → MFA prompt surfaces in the UI → user submits the code →
@@ -313,8 +316,10 @@ status, sensor state, has_captcha). Defensive — the spike showed the sensor ac
 ## 13. Residential proxy plan (deferred, proxy-ready)
 
 Decision (user): **direct/default egress this increment; add residential proxy only after
-the build is tested.** Evidence supports it — the datacenter IP already cleared LM's
-sensor, so residential is robustness/realism, not necessity.
+the build is tested.** ⚠️ **Superseded (2026-06-17):** milestone 0 proved a datacenter IP is
+**tarpitted** on the LM credential POST, so a residential egress is **necessary**, not just
+robustness/realism — see the Status note up top. The env-driven mechanism below (off by
+default, no code change to enable) is exactly what makes that fix a config flip.
 
 - The driver reads `PROXY_*` from env and, if set, passes `proxy={server, username,
   password}` to the Chromium context — **off by default**. Enabling it later is `.env` +

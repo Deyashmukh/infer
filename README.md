@@ -55,9 +55,37 @@ Open that URL, pick a carrier, and follow the prompts. If the backend isn't on
 
 The Docker image runs unchanged on any VM: install Docker, `docker build` / `docker run` as
 above (expose port 8000), set `FRONTEND_ORIGIN` to the frontend's URL (CORS), and point the
-frontend's `VITE_API_URL` at the VM. Note: carriers see the **browser's egress IP** — datacenter
-IPs can be tarpitted on the credential POST, so run behind residential egress for production
-(`PROXY_*` hooks are wired but deferred).
+frontend's `VITE_API_URL` at the VM.
+
+### Egress matters (residential proxy)
+
+Carriers see the **browser's egress IP**. Liberty Mutual **tarpits the credential POST from
+datacenter IPs** (AWS/GCP/…): the POST fires and then hangs with no response. A **residential
+egress fixes it** — verified end-to-end on an AWS VM, where the full LM login (credentials →
+MFA → document fetch) completes once the browser exits through a residential IP. (Geico shows
+no such tarpit and runs fine on direct egress.)
+
+The backend routes the browser through a proxy whenever these are set (see `.env.example`):
+
+```bash
+PROXY_SERVER=http://gw.your-residential-proxy.com:8080   # a residential proxy service
+PROXY_USERNAME=...
+PROXY_PASSWORD=...
+```
+
+**Local dev — no paid proxy needed.** Borrow your own home connection as the residential
+egress with an SSH reverse SOCKS tunnel (OpenSSH ≥ 7.6):
+
+```bash
+# Run on your home machine — opens a SOCKS proxy on the VM's :1080 that exits via your home IP:
+ssh -R 1080 user@your-vm
+```
+
+Then point the backend at it (the tunnel needs no proxy credentials):
+
+```bash
+PROXY_SERVER=socks5://127.0.0.1:1080
+```
 
 ## Test
 
