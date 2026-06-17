@@ -97,8 +97,9 @@ Carrier edges actively fingerprint automation. The mitigations in the product:
 - **per-carrier HTTP version** — Liberty Mutual's Cloudflare login edge rejects HTTP/2
   (`--disable-http2`, confirmed live), while Geico runs over HTTP/2.
 
-The full honest account — including the datacenter-IP tarpit we diagnosed by elimination and
-the residential-egress path — is in **[`docs/anti-bot-and-hosting.md`](docs/anti-bot-and-hosting.md)**.
+When run from a datacenter IP, carrier edges can still tarpit the automated browser on the
+sensitive credential POST; the deployment intent is to run the browser behind residential
+egress (the proxy hooks are wired but deferred).
 
 ## Latency
 
@@ -146,4 +147,4 @@ CORS, launch-arg wiring) is covered by the offline suite.
 - One document per carrier (by design).
 - Latency is carrier-server-bound (see above).
 - Geico session-reuse is limited (its session token lives in the dashboard URL).
-- Residential-proxy egress is wired but deferred (see the anti-bot doc).
+- Residential-proxy egress is wired but deferred.

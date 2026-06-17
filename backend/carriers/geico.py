@@ -198,7 +198,6 @@ async def _load_proof_of_insurance(page: Page, query: str) -> str:
     capture that response. A direct API GET would be faster (~0.6s vs ~4s) but the edge requires
     an ASP.NET ``x-xsrf-token`` antiforgery header whose ``XSRF-TOKEN`` cookie isn't set until an
     edgecustomer page has loaded — so priming it costs about as much as the page-nav itself.
-    See docs/anti-bot-and-hosting.md for the full finding.
     """
     body = ""
     with contextlib.suppress(Exception):
