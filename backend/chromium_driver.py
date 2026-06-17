@@ -6,6 +6,7 @@ from typing import Any
 from playwright.async_api import Browser, BrowserContext, Page, ProxySettings, async_playwright
 
 from backend.browser import AuthStep, DocRef, FetchedDoc
+from backend.carriers import lm as lm_carrier
 from spike.config import Config
 
 
@@ -35,19 +36,25 @@ class ChromiumDriver:
         return self._page
 
     async def open_login(self, login_url: str) -> None:
-        raise NotImplementedError  # filled in the next task
+        page = await self._ensure()
+        await lm_carrier.open_login(page, login_url)
 
     async def submit_credentials(self, username: str, password: str) -> AuthStep:
-        raise NotImplementedError  # filled in the next task
+        page = await self._ensure()
+        return await lm_carrier.submit_credentials(page, username, password)
 
     async def submit_mfa(self, code: str) -> AuthStep:
-        raise NotImplementedError  # filled in the next task
+        page = await self._ensure()
+        return await lm_carrier.submit_mfa(page, code)
 
     async def list_documents(self) -> list[DocRef]:
-        raise NotImplementedError  # filled in the next task
+        page = await self._ensure()
+        return await lm_carrier.list_documents(page)
 
     async def fetch_document(self, ref: DocRef) -> FetchedDoc:
-        raise NotImplementedError  # filled in the next task
+        page = await self._ensure()
+        assert self._ctx is not None  # guaranteed by _ensure
+        return await lm_carrier.fetch_document(self._ctx, page, ref)
 
     async def close(self) -> None:
         if self._browser is not None:
@@ -57,6 +64,7 @@ class ChromiumDriver:
             await self._pw.stop()
             self._pw = None
         self._page = self._ctx = None
+
 
 def make_chromium_driver_factory(cfg: Config) -> Callable[[], ChromiumDriver]:
     def factory() -> ChromiumDriver:
