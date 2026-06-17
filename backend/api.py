@@ -15,6 +15,10 @@ from backend.sessions import SessionManager, SessionRegistry
 def build_router(manager: SessionManager, registry: SessionRegistry) -> APIRouter:
     router = APIRouter()
 
+    @router.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
     @router.post("/sessions", status_code=201)
     async def create_session(req: CreateSessionRequest) -> dict[str, str]:
         session = manager.start(req.username, req.password)

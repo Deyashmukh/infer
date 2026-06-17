@@ -13,6 +13,6 @@ RUN uv sync --frozen --no-dev
 
 COPY . .
 
-# Milestone 0 default: the proven interactive login gate (creds + MFA on stdin).
-# Task 5 replaces this with: uvicorn --factory backend.main:build_production_app
-CMD ["uv", "run", "python", "-m", "backend.confirm_h1"]
+# Product API: factory returns a FastAPI app wired to the real Chromium driver.
+# The milestone-0 login gate overrides this CMD at run time.
+CMD ["uv", "run", "uvicorn", "--factory", "backend.main:build_production_app", "--host", "0.0.0.0", "--port", "8000"]
