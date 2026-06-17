@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import getpass
+import hashlib
 import json
 import os
 import time
@@ -56,6 +57,8 @@ async def _locate_otp(page: Page) -> Any:
 
 
 async def main() -> None:
+    src_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]
+    print(f"[build check] confirm_h1 SRC={src_hash}  (compare to the value I gave you)")
     cfg = load_config(os.environ)
     OUT.mkdir(parents=True, exist_ok=True)
     user = input("LM username/email: ").strip()
