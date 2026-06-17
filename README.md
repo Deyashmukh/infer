@@ -87,6 +87,20 @@ Then point the backend at it (the tunnel needs no proxy credentials):
 PROXY_SERVER=socks5://127.0.0.1:1080
 ```
 
+### How we found this
+
+The hosted (datacenter) browser's LM credential POST would fire and then **hang with no
+response** — a deliberate tarpit. The first theory was an automation/browser fingerprint, which
+sent us down a stealth-browser rabbit hole (patchright, managed anti-detect) — all dead ends. The
+real catch was a **confound**: those experiments used *dummy* credentials, and LM tarpits
+invalid/unknown logins on **every** egress (a standard anti-enumeration stall — it even happened
+from a Mac), so they were measuring the wrong thing. Re-running with **real** credentials isolated
+a single variable: the **egress IP**. Same browser, same box — a datacenter IP tarpits, a
+residential IP sails through. We proved it by tunnelling the datacenter VM's browser out through a
+home connection with an `ssh -R 1080` reverse SOCKS proxy: the full login (credentials → MFA →
+document fetch) completed end-to-end. So the fix is a **residential egress** — a proxy in
+production, the SSH tunnel for local dev — **not a fancier browser**.
+
 ## Test
 
 ```bash
