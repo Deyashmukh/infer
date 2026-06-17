@@ -90,8 +90,20 @@ async def main() -> None:
             await page.wait_for_selector("input[name=username]", timeout=30000)
             await page.fill("input[name=username]", user)
             await page.fill("input[name=password]", pwd)
+            await page.wait_for_timeout(400)  # let the form's JS attach its submit handler
             t0 = time.monotonic()
             await page.click("button[type=submit]")
+            # A click landing before the login SPA wires up its submit handler
+            # silently no-ops (observed on the datacenter run: login_resp stayed
+            # empty and the page never left www.libertymutual.com -> 30s TIMEOUT).
+            # Confirm the credential POST actually fired; re-click once if not.
+            for _ in range(6):
+                await page.wait_for_timeout(1000)
+                if login_resp or "login.libertymutual.com" in page.url:
+                    break
+            else:
+                with contextlib.suppress(Exception):
+                    await page.click("button[type=submit]")
 
             state = "TIMEOUT"
             for _ in range(30):  # up to 30s (HTTP/1.1 is slower than h2)
