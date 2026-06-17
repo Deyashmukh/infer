@@ -1,7 +1,6 @@
-# Self-hosted headless Chromium + backend. Used by milestone 0 (login gate) and
-# the product (Task 5 switches CMD to the API). The base image bundles Chromium +
-# system libs; the tag MUST match the pinned `playwright` package (Task 1: ==1.60.0)
-# so `uv run` finds the preinstalled browser via PLAYWRIGHT_BROWSERS_PATH.
+# Self-hosted headless Chromium + FastAPI backend, deployable unchanged to a VM.
+# The base image bundles Chromium + system libs; its tag MUST match the pinned
+# `playwright` package (==1.60.0) so `uv run` finds the preinstalled browser.
 FROM mcr.microsoft.com/playwright/python:v1.60.0-jammy
 
 WORKDIR /app
@@ -13,6 +12,6 @@ RUN uv sync --frozen --no-dev
 
 COPY . .
 
-# Product API: factory returns a FastAPI app wired to the real Chromium driver.
-# The milestone-0 login gate overrides this CMD at run time.
+# Factory returns a FastAPI app wired to the real Chromium driver. Chromium in a container
+# needs --shm-size=1g and CHROMIUM_ARGS=--no-sandbox (see README).
 CMD ["uv", "run", "uvicorn", "--factory", "backend.main:build_production_app", "--host", "0.0.0.0", "--port", "8000"]
