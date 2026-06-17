@@ -182,14 +182,16 @@ async def list_documents(page: Page) -> list[DocRef]:
     total = await loc.count()
 
     refs: list[DocRef] = []
+    visible_i = 0
     for i in range(total):
         item = loc.nth(i)
         if not await item.is_visible():
             continue
 
         # Derive a human name from the nearest ancestor card/section heading.
-        name = await _extract_doc_name(page, item, i)
-        refs.append(DocRef(doc_id=str(i), name=name))
+        name = await _extract_doc_name(page, item, visible_i)
+        refs.append(DocRef(doc_id=str(visible_i), name=name))
+        visible_i += 1
 
     if not refs:
         raise DocFetchError("no 'View / print' controls found on documents page")
@@ -295,7 +297,6 @@ async def fetch_document(ctx: BrowserContext, page: Page, ref: DocRef) -> Fetche
             await popup.close()
 
     except Exception as exc:
-        # If popup capture failed entirely, try a download-event fallback.
         if content is None:
             raise DocFetchError(f"failed to capture PDF popup for {ref.name!r}: {exc}") from exc
 
