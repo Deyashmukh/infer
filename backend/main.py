@@ -6,10 +6,12 @@ import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.types import Lifespan
 
 from backend.api import build_router
@@ -50,6 +52,7 @@ def build_app(
     manager: SessionManager,
     registry: SessionRegistry,
     lifespan: Lifespan[FastAPI] | None = None,
+    frontend_dist: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="infer — LM policy fetcher", lifespan=lifespan)
     app.add_middleware(
@@ -59,6 +62,13 @@ def build_app(
         allow_headers=["*"],
     )
     app.include_router(build_router(manager, registry))
+    # Serve the built React SPA (if present) at / — the API routes above are registered
+    # first, so /health, /sessions, … still resolve to the API; everything else falls
+    # through to the static bundle. The dist dir exists only in the built image, so this
+    # is a no-op in dev/tests (where the frontend runs via Vite on its own port).
+    dist = frontend_dist or (Path(__file__).resolve().parent.parent / "frontend" / "dist")
+    if dist.is_dir():
+        app.mount("/", StaticFiles(directory=str(dist), html=True), name="frontend")
     return app
 
 
