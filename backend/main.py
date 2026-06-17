@@ -6,6 +6,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import Lifespan
@@ -46,6 +47,10 @@ def build_production_app() -> FastAPI:
     """Wire the real Chromium driver + monotonic clock + background sweeper.
 
     Exercised live (needs real env + a running browser), not in the offline suite."""
+    # Dev convenience: load .env if present so `uvicorn --factory ...` works without
+    # sourcing it first. override=False — real environment vars win in prod, and a
+    # missing .env (e.g. in the container, where vars are injected) is a silent no-op.
+    load_dotenv(override=False)
     registry = SessionRegistry()
     cfg = load_config(os.environ)
     login_urls: dict[str, str] = {"liberty_mutual": cfg.lm_login_url}
