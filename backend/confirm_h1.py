@@ -62,6 +62,7 @@ async def main() -> None:
     pwd = getpass.getpass("LM password (hidden): ")
     failed: list[dict[str, str | None]] = []
     login_resp: dict[str, Any] = {}
+    login_sent = {"sent": False}  # did the /usernamepassword/login POST actually fire?
 
     async with async_playwright() as pw:
         launch_args = ["--disable-http2"]
@@ -81,8 +82,13 @@ async def main() -> None:
                 if "usernamepassword/login" in r.url:
                     login_resp.update({"status": r.status})
 
+            def on_request(r: Request) -> None:
+                if "usernamepassword/login" in r.url:
+                    login_sent["sent"] = True
+
             page.on("requestfailed", on_failed)
             page.on("response", on_resp)
+            page.on("request", on_request)
 
             await page.goto(cfg.lm_login_url, wait_until="domcontentloaded")
             await page.wait_for_timeout(1500)
@@ -99,7 +105,7 @@ async def main() -> None:
             # Confirm the credential POST actually fired; re-click once if not.
             for _ in range(6):
                 await page.wait_for_timeout(1000)
-                if login_resp or "login.libertymutual.com" in page.url:
+                if login_sent["sent"] or login_resp or "login.libertymutual.com" in page.url:
                     break
             else:
                 with contextlib.suppress(Exception):
@@ -116,7 +122,10 @@ async def main() -> None:
                     break
             await page.screenshot(path=str(OUT / "h1_postcreds.png"))
             lm_failed = [f for f in failed if "libertymutual" in str(f.get("u"))]
-            print(f"\npost-creds state={state}  login_resp={login_resp}  lm_failed={lm_failed}")
+            print(
+                f"\npost-creds state={state}  login_POST_sent={login_sent['sent']}  "
+                f"login_resp={login_resp}  lm_failed={lm_failed}"
+            )
 
             if state != "MFA":
                 print(">>> Did not reach MFA. HTTP/1.1 did not complete the login this attempt.")
