@@ -93,7 +93,15 @@ async def main() -> None:
             await page.goto(cfg.lm_login_url, wait_until="domcontentloaded")
             await page.wait_for_timeout(1500)
             await page.get_by_role("link", name="Log in").first.click()
-            await page.wait_for_selector("input[name=username]", timeout=30000)
+            try:
+                await page.wait_for_selector("input[name=username]", timeout=30000)
+            except Exception:
+                await page.screenshot(path=str(OUT / "h1_noform.png"))
+                body = (await page.inner_text("body"))[:300].replace("\n", " ")
+                print(f"\n>>> login form never loaded.  url={page.url}")
+                print(f"    body[:300]={body!r}")
+                print("    (screenshot -> spike/out/h1_noform.png)")
+                return
             await page.fill("input[name=username]", user)
             await page.fill("input[name=password]", pwd)
             await page.wait_for_timeout(400)  # let the form's JS attach its submit handler
