@@ -144,6 +144,19 @@ async def main() -> None:
                 # git-ignored; this file holds live session tokens — do not commit.
                 session_state = await ctx.storage_state()
                 (OUT / "lm_state.json").write_text(json.dumps(session_state))
+                # Capture the documents-page HTML (in a separate tab so the main
+                # page stays on the dashboard) as the Task-3 parser fixture source.
+                # PII — sanitize before committing; spike/out is git-ignored.
+                with contextlib.suppress(Exception):
+                    doc_page = await ctx.new_page()
+                    await doc_page.goto(
+                        "https://eservice.libertymutual.com/accountmanager/documents",
+                        wait_until="domcontentloaded",
+                    )
+                    await doc_page.wait_for_timeout(2500)
+                    (OUT / "documents_real.html").write_text(await doc_page.content())
+                    await doc_page.close()
+                    print("    (documents-page HTML -> spike/out/documents_real.html)")
             await page.screenshot(path=str(OUT / "h1_postmfa.png"))
             docs = discover_document_urls(await page.content(), base_url=page.url)
             nav = await page.evaluate(
