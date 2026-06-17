@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import './pdfWorker'
-import { createSession, submitMfa, type SessionStatus } from './api'
+import { createSession, submitMfa, type Carrier, type SessionStatus } from './api'
 import { usePolling } from './usePolling'
 import { CarrierSelect } from './components/CarrierSelect'
 import { CredentialForm } from './components/CredentialForm'
@@ -12,6 +12,7 @@ type AppStep = 'select-carrier' | 'credentials' | 'polling'
 
 export function App() {
   const [step, setStep] = useState<AppStep>('select-carrier')
+  const [carrier, setCarrier] = useState<Carrier | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [mfaSubmitTimestamp, setMfaSubmitTimestamp] = useState<number | null>(null)
   const [primaryLatencyMs, setPrimaryLatencyMs] = useState<number | null>(null)
@@ -20,12 +21,14 @@ export function App() {
   const status: SessionStatus = pollingState?.status ?? 'STARTING'
   const documents = pollingState?.documents ?? []
 
-  function handleCarrierSelect(_: string) {
+  function handleCarrierSelect(selected: Carrier) {
+    setCarrier(selected)
     setStep('credentials')
   }
 
   async function handleCredentials(username: string, password: string) {
-    const res = await createSession(username, password)
+    if (!carrier) return
+    const res = await createSession(carrier, username, password)
     setSessionId(res.session_id)
     setStep('polling')
   }

@@ -2,6 +2,8 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 // --- types ---
 
+export type Carrier = 'liberty_mutual' | 'geico'
+
 export type SessionStatus =
   | 'STARTING'
   | 'AWAITING_MFA'
@@ -37,13 +39,14 @@ export interface CreateSessionResponse {
 // --- functions ---
 
 export async function createSession(
+  carrier: Carrier,
   username: string,
   password: string,
 ): Promise<CreateSessionResponse> {
   const res = await fetch(`${BASE_URL}/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ carrier: 'liberty_mutual', username, password }),
+    body: JSON.stringify({ carrier, username, password }),
   })
   if (!res.ok) throw new Error(`createSession failed: ${res.status}`)
   return res.json() as Promise<CreateSessionResponse>

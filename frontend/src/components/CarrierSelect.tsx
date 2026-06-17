@@ -1,5 +1,7 @@
+import type { Carrier } from '../api'
+
 interface CarrierSelectProps {
-  onSelect: (carrier: string) => void
+  onSelect: (carrier: Carrier) => void
 }
 
 export function CarrierSelect({ onSelect }: CarrierSelectProps) {
