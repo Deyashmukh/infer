@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
-from playwright.async_api import Browser, BrowserContext, Page, ProxySettings, async_playwright
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    ProxySettings,
+    StorageState,
+    async_playwright,
+)
 
 from backend.browser import AuthStep, CarrierModule, DocRef, FetchedDoc
 from backend.carriers import registry
@@ -19,7 +26,7 @@ class ChromiumDriver:
         self._ctx: BrowserContext | None = None
         self._page: Page | None = None
 
-    async def _ensure(self) -> Page:
+    async def _ensure(self, storage_state: StorageState | None = None) -> Page:
         if self._page is None:
             self._pw = await async_playwright().start()
             self._browser = await self._pw.chromium.launch(
@@ -32,7 +39,11 @@ class ChromiumDriver:
                     username=self._cfg.proxy_username or "",
                     password=self._cfg.proxy_password or "",
                 )
-            self._ctx = await self._browser.new_context(accept_downloads=True, proxy=proxy)
+            self._ctx = await self._browser.new_context(
+                accept_downloads=True,
+                proxy=proxy,
+                storage_state=storage_state,
+            )
             self._page = await self._ctx.new_page()
         return self._page
 
@@ -56,6 +67,24 @@ class ChromiumDriver:
         page = await self._ensure()
         assert self._ctx is not None  # guaranteed by _ensure
         return await self._carrier.fetch_document(self._ctx, page, ref)
+
+    async def storage_state(self) -> dict[str, Any]:
+        assert self._ctx is not None, "storage_state() called before browser was opened"
+        # StorageState is a TypedDict (subtype of dict); cast to satisfy the Protocol.
+        raw: StorageState = await self._ctx.storage_state()
+        return dict(raw)
+
+    async def try_resume(self, state: dict[str, Any]) -> bool:
+        """Load *state* into a fresh context and check if the session is still live.
+
+        Creates (or recreates) the browser context with the cached storage state,
+        then delegates to the carrier's is_authenticated check.  Returns True if
+        the documents page is reachable without login; False if the session has
+        expired.  Never submits credentials.
+        """
+        # StorageState is a TypedDict; narrow via cast so _ensure sees the right type.
+        page = await self._ensure(storage_state=cast(StorageState, state))
+        return await self._carrier.is_authenticated(page)
 
     async def close(self) -> None:
         if self._browser is not None:

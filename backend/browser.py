@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 
 from backend.models import (
     BotChallengeError,
@@ -37,6 +37,8 @@ class BrowserDriver(Protocol):
     async def list_documents(self) -> list[DocRef]: ...
     async def fetch_document(self, ref: DocRef) -> FetchedDoc: ...
     async def close(self) -> None: ...
+    async def storage_state(self) -> dict[str, Any]: ...
+    async def try_resume(self, state: dict[str, Any]) -> bool: ...
 
 
 class CarrierModule(Protocol):
@@ -47,6 +49,7 @@ class CarrierModule(Protocol):
     async def submit_mfa(self, page: object, code: str) -> AuthStep: ...
     async def list_documents(self, page: object) -> list[DocRef]: ...
     async def fetch_document(self, ctx: object, page: object, ref: DocRef) -> FetchedDoc: ...
+    async def is_authenticated(self, page: object) -> bool: ...
 
 
 _SAMPLE_PDF = b"%PDF-1.7\n" + b"0" * 2000 + b"\n%%EOF"
@@ -67,6 +70,7 @@ class FakeDriver:
         connection_lost_on_fetch: bool = False,
         docs: list[tuple[str, str]] | None = None,
         fetch_delay: float = 0.0,
+        resumable: bool = False,
     ) -> None:
         self._bot_block = bot_block
         self._auth_fail = auth_fail
@@ -77,6 +81,7 @@ class FakeDriver:
         self._connection_lost_on_fetch = connection_lost_on_fetch
         self._docs = docs
         self._fetch_delay = fetch_delay
+        self._resumable = resumable
         self.closed = False
 
     async def open_login(self, login_url: str) -> None:
@@ -116,3 +121,9 @@ class FakeDriver:
 
     async def close(self) -> None:
         self.closed = True
+
+    async def storage_state(self) -> dict[str, Any]:
+        return {"cookies": [], "ts": 0}
+
+    async def try_resume(self, state: dict[str, Any]) -> bool:
+        return self._resumable

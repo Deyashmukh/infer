@@ -1,10 +1,19 @@
+"""Session orchestration: lifecycle management and session-reuse cache.
+
+SessionCache is in-memory only, TTL-evicted, and keyed by (carrier, username).
+It is single-user-scoped (the account owner re-running) — not multi-tenant-safe —
+and cached tokens never touch disk.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import logging
+import time as _time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from backend.browser import AuthStep, BrowserDriver, DocRef
 from backend.models import (
@@ -17,6 +26,41 @@ from backend.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_CACHE_TTL = 600.0  # seconds
+
+
+class SessionCache:
+    """In-memory store of browser storage states keyed by (carrier, username).
+
+    Entries expire after *ttl* seconds (default 600 s).  The cache is
+    single-user-scoped — suitable for the account owner re-running — and is
+    never written to disk.
+    """
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = _time.monotonic,
+        ttl: float = _DEFAULT_CACHE_TTL,
+    ) -> None:
+        self._clock = clock
+        self._ttl = ttl
+        self._store: dict[tuple[str, str], tuple[dict[str, Any], float]] = {}
+
+    def get(self, carrier: str, username: str) -> dict[str, Any] | None:
+        """Return a cached storage state if present and not expired, else None."""
+        entry = self._store.get((carrier, username))
+        if entry is None:
+            return None
+        state, saved_at = entry
+        if self._clock() - saved_at >= self._ttl:
+            del self._store[(carrier, username)]
+            return None
+        return state
+
+    def put(self, carrier: str, username: str, state: dict[str, Any]) -> None:
+        """Store *state* for *(carrier, username)*, overwriting any previous entry."""
+        self._store[(carrier, username)] = (state, self._clock())
 
 
 @dataclass
@@ -64,6 +108,7 @@ class SessionManager:
         clock: Callable[[], float],
         mfa_deadline: float = 120.0,
         max_mfa_attempts: int = 3,
+        cache: SessionCache | None = None,
     ) -> None:
         self._registry = registry
         self._driver_factory = driver_factory
@@ -71,6 +116,7 @@ class SessionManager:
         self._clock = clock
         self._mfa_deadline = mfa_deadline
         self._max_mfa_attempts = max_mfa_attempts
+        self._cache = cache or SessionCache(clock=clock)
 
     def start(self, carrier: str, username: str, password: str) -> Session:
         session = self._registry.create()
@@ -116,22 +162,35 @@ class SessionManager:
     async def _run(self, session: Session, username: str, password: str) -> None:
         driver = self._driver_factory(session.carrier)
         try:
-            await driver.open_login(self._login_urls[session.carrier])
-            step = await driver.submit_credentials(username, password)
-            while step is AuthStep.NEEDS_MFA:
-                session.status = SessionStatus.AWAITING_MFA
-                code = await asyncio.wait_for(session.mfa_codes.get(), timeout=self._mfa_deadline)
-                session.status = SessionStatus.VERIFYING_MFA
-                if session.mfa_start == 0.0:  # fallback if API path hasn't set it yet
-                    session.mfa_start = self._clock()
-                session.mfa_attempts += 1
-                try:
-                    step = await driver.submit_mfa(code)
-                except MfaError:
-                    if session.mfa_attempts >= self._max_mfa_attempts:
-                        raise
-                    step = AuthStep.NEEDS_MFA
-            session.status = SessionStatus.FETCHING
+            # --- session-reuse fast path ---
+            cached_state = self._cache.get(session.carrier, username)
+            if cached_state is not None and await driver.try_resume(cached_state):
+                # Cached session is still live: skip login + MFA entirely.
+                session.mfa_start = self._clock()
+                session.status = SessionStatus.FETCHING
+            else:
+                # Normal login flow (also used when try_resume returns False).
+                await driver.open_login(self._login_urls[session.carrier])
+                step = await driver.submit_credentials(username, password)
+                while step is AuthStep.NEEDS_MFA:
+                    session.status = SessionStatus.AWAITING_MFA
+                    code = await asyncio.wait_for(
+                        session.mfa_codes.get(), timeout=self._mfa_deadline
+                    )
+                    session.status = SessionStatus.VERIFYING_MFA
+                    if session.mfa_start == 0.0:  # fallback if API path hasn't set it yet
+                        session.mfa_start = self._clock()
+                    session.mfa_attempts += 1
+                    try:
+                        step = await driver.submit_mfa(code)
+                    except MfaError:
+                        if session.mfa_attempts >= self._max_mfa_attempts:
+                            raise
+                        step = AuthStep.NEEDS_MFA
+                # Authenticated: persist the storage state for future runs.
+                self._cache.put(session.carrier, username, await driver.storage_state())
+                session.status = SessionStatus.FETCHING
+
             refs = await driver.list_documents()
             if not refs:
                 raise DocFetchError("no documents found")

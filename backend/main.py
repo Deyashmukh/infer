@@ -12,7 +12,7 @@ from starlette.types import Lifespan
 
 from backend.api import build_router
 from backend.chromium_driver import make_chromium_driver_factory
-from backend.sessions import SessionManager, SessionRegistry
+from backend.sessions import SessionCache, SessionManager, SessionRegistry
 from spike.config import load_config
 
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173")
@@ -56,6 +56,7 @@ def build_production_app() -> FastAPI:
         driver_factory=make_chromium_driver_factory(cfg),
         login_urls=login_urls,
         clock=time.monotonic,
+        cache=SessionCache(clock=time.monotonic),
     )
 
     @asynccontextmanager

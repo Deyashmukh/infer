@@ -165,6 +165,19 @@ async def submit_mfa(page: Page, code: str) -> AuthStep:
     raise MfaError("timed out waiting for authentication after MFA submission")
 
 
+async def is_authenticated(page: Page) -> bool:
+    """Navigate to the documents URL and return True if the session is still live.
+
+    Returns False if the carrier bounces us to a login domain, indicating the
+    cached session has expired.  Must NOT submit credentials.
+    """
+    try:
+        await page.goto(DOCS_URL, wait_until="domcontentloaded", timeout=30000)
+    except Exception:
+        return False
+    return "login.libertymutual.com" not in page.url
+
+
 async def list_documents(page: Page) -> list[DocRef]:
     """Navigate to the documents page and enumerate visible "View / print" controls.
 

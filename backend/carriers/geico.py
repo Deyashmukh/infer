@@ -28,3 +28,7 @@ async def list_documents(page: Page) -> list[DocRef]:
 
 async def fetch_document(ctx: BrowserContext, page: Page, ref: DocRef) -> FetchedDoc:
     raise NotImplementedError("Geico flow not yet implemented — pending portal recon")
+
+
+async def is_authenticated(page: Page) -> bool:
+    raise NotImplementedError("Geico flow not yet implemented — pending portal recon")
